@@ -1,36 +1,54 @@
-name: CI
-
-permissions: {}
+name: Test
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
-  check:
-    name: Foundry project
+  test:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
+          fetch-depth: 1
           persist-credentials: false
-          submodules: recursive
+
+      - run: corepack enable pnpm
+
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
 
-      - name: Run Forge fmt
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format
         run: forge fmt --check
 
-      - name: Run Forge build
-        run: forge build --sizes
+      - name: Unit Tests
+        run: pnpm test
 
-      # Fork tests skip unless the MAINNET_RPC_URL secret is set
-      - name: Run Forge tests
-        run: forge test -vvv
+      # Skips unless the MAINNET_RPC_URL secret (archive node) is set
+      - name: Fork Tests
+        timeout-minutes: 10
+        run: pnpm test:fork
         env:
           MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}

@@ -2,6 +2,8 @@
 pragma solidity 0.8.35;
 
 import {Test} from "forge-std/Test.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {RevenueRouter, IRToken} from "../src/RevenueRouter.sol";
 import {MockMain, MockRToken, MockNoReturnToken, MockFalseToken} from "./mocks/Mocks.sol";
 
@@ -134,6 +136,19 @@ contract RevenueRouterTest is Test {
         router.poke(); // destinations hold nothing
     }
 
+    function test_poke_tradingPaused() public {
+        _setDests(_dests(alice, bob));
+        eUSD.mint(alice, 1e18);
+        eUSD.mint(address(router), 1e18);
+        main.setTradingPaused(true);
+        vm.expectRevert(RevenueRouter.TradingPaused.selector);
+        router.poke();
+
+        main.setTradingPaused(false);
+        router.poke();
+        assertEq(eUSD.balanceOf(alice), 2e18);
+    }
+
     function testFuzz_poke_neverOverspends(uint96 a, uint96 b, uint128 amount) public {
         vm.assume(uint256(a) + b > 0);
         amount = uint128(bound(amount, router.MIN_POKE_AMOUNT(), type(uint128).max));
@@ -156,7 +171,7 @@ contract RevenueRouterTest is Test {
         vm.expectEmit(address(router));
         emit RevenueRouter.Swept(address(eUSD), carol, 5e18);
         vm.prank(gov);
-        router.sweep(address(eUSD), carol, 5e18);
+        router.sweep(IERC20(address(eUSD)), carol, 5e18);
         assertEq(eUSD.balanceOf(carol), 5e18);
     }
 
@@ -164,26 +179,29 @@ contract RevenueRouterTest is Test {
         MockNoReturnToken token = new MockNoReturnToken();
         token.mint(address(router), 7);
         vm.prank(gov);
-        router.sweep(address(token), carol, 7);
+        router.sweep(IERC20(address(token)), carol, 7);
         assertEq(token.balanceOf(carol), 7);
     }
 
     function test_sweep_failures() public {
         address falseToken = address(new MockFalseToken());
         vm.startPrank(gov);
-        vm.expectRevert(RevenueRouter.TransferFailed.selector);
-        router.sweep(falseToken, carol, 1);
-        vm.expectRevert(RevenueRouter.TransferFailed.selector);
-        router.sweep(makeAddr("eoa"), carol, 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, falseToken)
+        );
+        router.sweep(IERC20(falseToken), carol, 1);
+        address eoa = makeAddr("eoa");
+        vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, eoa));
+        router.sweep(IERC20(eoa), carol, 1);
         vm.expectRevert(RevenueRouter.ZeroAddress.selector);
-        router.sweep(address(eUSD), address(0), 1);
+        router.sweep(IERC20(address(eUSD)), address(0), 1);
         vm.stopPrank();
     }
 
     function test_sweep_onlyGovernance() public {
         vm.prank(alice);
         vm.expectRevert(RevenueRouter.NotGovernance.selector);
-        router.sweep(address(eUSD), alice, 1);
+        router.sweep(IERC20(address(eUSD)), alice, 1);
     }
 
     function test_constructor_zeroAddress() public {

@@ -1,0 +1,20 @@
+{
+  "name": "revenue-router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "eUSD revenue destination for the Reserve Protocol Distributor",
+  "license": "BlueOak-1.0.0",
+  "scripts": {
+    "compile": "forge compile",
+    "test": "forge test --no-match-path 'test/fork/*'",
+    "test:fork": "forge test --match-path 'test/fork/*' --threads 1 --compute-units-per-second 50",
+    "format": "forge fmt"
+  },
+  "packageManager": "pnpm@11.8.0",
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.6.1"
+  },
+  "devDependencies": {
+    "forge-std": "github:foundry-rs/forge-std#v1.17.0"
+  }
+}
