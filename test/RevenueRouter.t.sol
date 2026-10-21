@@ -4,7 +4,8 @@ pragma solidity 0.8.35;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {RevenueRouter, IRToken} from "../src/RevenueRouter.sol";
+import {RevenueRouter} from "../src/RevenueRouter.sol";
+import {IRToken, IRevenueRouter} from "../src/interfaces/IRevenueRouter.sol";
 import {MockMain, MockRToken, MockNoReturnToken, MockFalseToken} from "./mocks/Mocks.sol";
 
 contract RevenueRouterTest is Test {
@@ -40,7 +41,7 @@ contract RevenueRouterTest is Test {
     function test_setDestinations() public {
         address[] memory d = _dests(alice, bob);
         vm.expectEmit(address(router));
-        emit RevenueRouter.DestinationsSet(d);
+        emit IRevenueRouter.DestinationsSet(d);
         _setDests(d);
         assertEq(router.destinations(), d);
 
@@ -50,7 +51,7 @@ contract RevenueRouterTest is Test {
 
     function test_setDestinations_onlyGovernance() public {
         vm.prank(alice);
-        vm.expectRevert(RevenueRouter.NotGovernance.selector);
+        vm.expectRevert(IRevenueRouter.NotGovernance.selector);
         router.setDestinations(_dests(alice, bob));
     }
 
@@ -61,7 +62,7 @@ contract RevenueRouterTest is Test {
             d[i] = address(uint160(i + 1));
         }
         vm.prank(gov);
-        vm.expectRevert(abi.encodeWithSelector(RevenueRouter.TooManyDestinations.selector, n));
+        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.TooManyDestinations.selector, n));
         router.setDestinations(d);
     }
 
@@ -70,7 +71,7 @@ contract RevenueRouterTest is Test {
         for (uint256 i = 0; i < bad.length; ++i) {
             vm.prank(gov);
             vm.expectRevert(
-                abi.encodeWithSelector(RevenueRouter.InvalidDestination.selector, bad[i])
+                abi.encodeWithSelector(IRevenueRouter.InvalidDestination.selector, bad[i])
             );
             router.setDestinations(_dests(alice, bad[i]));
         }
@@ -78,7 +79,7 @@ contract RevenueRouterTest is Test {
 
     function test_setDestinations_duplicate() public {
         vm.prank(gov);
-        vm.expectRevert(abi.encodeWithSelector(RevenueRouter.DuplicateDestination.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.DuplicateDestination.selector, alice));
         router.setDestinations(_dests(alice, alice));
     }
 
@@ -94,7 +95,7 @@ contract RevenueRouterTest is Test {
         eUSD.mint(address(router), 1000e18);
 
         vm.expectEmit(address(router));
-        emit RevenueRouter.Poked(address(this), 1000e18);
+        emit IRevenueRouter.Poked(address(this), 1000e18);
         router.poke();
 
         assertEq(eUSD.balanceOf(alice), 100e18 + 250e18);
@@ -122,29 +123,29 @@ contract RevenueRouterTest is Test {
         eUSD.mint(alice, 1e18);
         uint256 amount = router.MIN_POKE_AMOUNT() - 1;
         eUSD.mint(address(router), amount);
-        vm.expectRevert(abi.encodeWithSelector(RevenueRouter.BelowMinimum.selector, amount));
+        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.BelowMinimum.selector, amount));
         router.poke();
     }
 
     function test_poke_noHoldings() public {
         eUSD.mint(address(router), router.MIN_POKE_AMOUNT());
-        vm.expectRevert(RevenueRouter.NoHoldings.selector);
+        vm.expectRevert(IRevenueRouter.NoHoldings.selector);
         router.poke(); // no destinations
 
         _setDests(_dests(alice, bob));
-        vm.expectRevert(RevenueRouter.NoHoldings.selector);
+        vm.expectRevert(IRevenueRouter.NoHoldings.selector);
         router.poke(); // destinations hold nothing
     }
 
-    function test_poke_tradingPaused() public {
+    function test_poke_tradingPausedOrFrozen() public {
         _setDests(_dests(alice, bob));
         eUSD.mint(alice, 1e18);
         eUSD.mint(address(router), 1e18);
-        main.setTradingPaused(true);
-        vm.expectRevert(RevenueRouter.TradingPaused.selector);
+        main.setTradingPausedOrFrozen(true);
+        vm.expectRevert(IRevenueRouter.TradingPausedOrFrozen.selector);
         router.poke();
 
-        main.setTradingPaused(false);
+        main.setTradingPausedOrFrozen(false);
         router.poke();
         assertEq(eUSD.balanceOf(alice), 2e18);
     }
@@ -169,7 +170,7 @@ contract RevenueRouterTest is Test {
     function test_sweep() public {
         eUSD.mint(address(router), 5e18);
         vm.expectEmit(address(router));
-        emit RevenueRouter.Swept(address(eUSD), carol, 5e18);
+        emit IRevenueRouter.Swept(address(eUSD), carol, 5e18);
         vm.prank(gov);
         router.sweep(IERC20(address(eUSD)), carol, 5e18);
         assertEq(eUSD.balanceOf(carol), 5e18);
@@ -193,19 +194,19 @@ contract RevenueRouterTest is Test {
         address eoa = makeAddr("eoa");
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, eoa));
         router.sweep(IERC20(eoa), carol, 1);
-        vm.expectRevert(RevenueRouter.ZeroAddress.selector);
+        vm.expectRevert(IRevenueRouter.ZeroAddress.selector);
         router.sweep(IERC20(address(eUSD)), address(0), 1);
         vm.stopPrank();
     }
 
     function test_sweep_onlyGovernance() public {
         vm.prank(alice);
-        vm.expectRevert(RevenueRouter.NotGovernance.selector);
+        vm.expectRevert(IRevenueRouter.NotGovernance.selector);
         router.sweep(IERC20(address(eUSD)), alice, 1);
     }
 
     function test_constructor_zeroAddress() public {
-        vm.expectRevert(RevenueRouter.ZeroAddress.selector);
+        vm.expectRevert(IRevenueRouter.ZeroAddress.selector);
         new RevenueRouter(IRToken(address(0)));
     }
 }

@@ -3,7 +3,8 @@ pragma solidity 0.8.35;
 
 import {Test, console} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {RevenueRouter, IRToken} from "../../src/RevenueRouter.sol";
+import {RevenueRouter} from "../../src/RevenueRouter.sol";
+import {IRToken, IRevenueRouter} from "../../src/interfaces/IRevenueRouter.sol";
 
 struct RevenueShare {
     uint16 rTokenDist;
@@ -78,7 +79,7 @@ contract RevenueRouterForkTest is Test {
         assertEq(router.destinations(), d);
 
         vm.prank(makeAddr("rando"));
-        vm.expectRevert(RevenueRouter.NotGovernance.selector);
+        vm.expectRevert(IRevenueRouter.NotGovernance.selector);
         router.setDestinations(d);
     }
 
@@ -125,7 +126,7 @@ contract RevenueRouterForkTest is Test {
         vm.stopPrank();
 
         deal(address(EUSD), address(router), 1e18);
-        vm.expectRevert(RevenueRouter.TradingPaused.selector);
+        vm.expectRevert(IRevenueRouter.TradingPausedOrFrozen.selector);
         router.poke();
 
         vm.prank(TIMELOCK);
@@ -133,20 +134,30 @@ contract RevenueRouterForkTest is Test {
         assertEq(EUSD.balanceOf(address(router)), 0);
     }
 
-    /// poke() ignores issuance-paused and frozen
+    /// poke() ignores issuance-paused and reverts while frozen; sweep() still works
     function test_issuancePausedAndFrozen() public {
         address[] memory d = _fundedDests(2);
         vm.startPrank(TIMELOCK);
         router.setDestinations(d);
         main.grantRole(bytes32("PAUSER"), TIMELOCK);
         main.pauseIssuance();
-        main.freezeForever();
         vm.stopPrank();
-        assertTrue(main.issuancePaused() && main.frozen() && !main.tradingPaused());
 
         deal(address(EUSD), address(router), 1e18);
         router.poke();
         assertLt(EUSD.balanceOf(address(router)), 2);
+
+        vm.prank(TIMELOCK);
+        main.freezeForever();
+        assertTrue(main.frozen() && !main.tradingPaused());
+
+        deal(address(EUSD), address(router), 1e18);
+        vm.expectRevert(IRevenueRouter.TradingPausedOrFrozen.selector);
+        router.poke();
+
+        vm.prank(TIMELOCK);
+        router.sweep(IERC20(address(EUSD)), TIMELOCK, 1e18);
+        assertEq(EUSD.balanceOf(address(router)), 0);
     }
 
     /// Worst-case gas at MAX_DESTINATIONS: every destination holds eUSD and all state is cold

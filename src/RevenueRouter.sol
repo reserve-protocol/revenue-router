@@ -3,16 +3,7 @@ pragma solidity 0.8.35;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
-interface IMain {
-    function hasRole(bytes32 role, address account) external view returns (bool);
-
-    function tradingPaused() external view returns (bool);
-}
-
-interface IRToken is IERC20 {
-    function main() external view returns (IMain);
-}
+import {IMain, IRToken, IRevenueRouter} from "./interfaces/IRevenueRouter.sol";
 
 /**
  * @title RevenueRouter
@@ -23,8 +14,8 @@ interface IRToken is IERC20 {
  *   Governance is any account holding the OWNER role on eUSD's Main (the eUSD governance
  *   timelock).
  *
- *   poke() reverts while eUSD trading is paused. It ignores eUSD's issuance-paused and frozen
- *   states. sweep() ignores all of eUSD's paused and frozen states.
+ *   poke() reverts while eUSD trading is paused or eUSD is frozen. It ignores issuance-paused.
+ *   sweep() ignores all of eUSD's paused and frozen states.
  *
  *   Weights are spot balances read inside poke(). Destinations are a governance-approved
  *   whitelist, so a destination that games its balance around a poke can be removed.
@@ -33,7 +24,7 @@ interface IRToken is IERC20 {
  *
  *   Not upgradeable, no pause. Governance can replace the destination list and sweep any token.
  */
-contract RevenueRouter {
+contract RevenueRouter is IRevenueRouter {
     using SafeERC20 for IERC20;
 
     bytes32 public constant OWNER = bytes32("OWNER");
@@ -49,19 +40,6 @@ contract RevenueRouter {
     IMain public immutable main; // eUSD's Main never changes
 
     address[] private _destinations;
-
-    event DestinationsSet(address[] destinations);
-    event Poked(address indexed caller, uint256 amount);
-    event Swept(address indexed token, address indexed to, uint256 amount);
-
-    error NotGovernance();
-    error ZeroAddress();
-    error TooManyDestinations(uint256 count);
-    error InvalidDestination(address destination);
-    error DuplicateDestination(address destination);
-    error TradingPaused();
-    error BelowMinimum(uint256 amount);
-    error NoHoldings();
 
     modifier governance() {
         if (!main.hasRole(OWNER, msg.sender)) revert NotGovernance();
@@ -100,9 +78,9 @@ contract RevenueRouter {
 
     /// Forward the router's whole eUSD balance to destinations, pro rata to their eUSD balances.
     /// Rounding dust (< 1 wei per destination) stays in the router for the next poke.
-    /// Reverts while eUSD trading is paused; ignores issuance-paused and frozen.
+    /// Reverts while eUSD trading is paused or eUSD is frozen; ignores issuance-paused.
     function poke() external {
-        if (main.tradingPaused()) revert TradingPaused();
+        if (main.tradingPausedOrFrozen()) revert TradingPausedOrFrozen();
 
         uint256 amount = eUSD.balanceOf(address(this));
         if (amount < MIN_POKE_AMOUNT) revert BelowMinimum(amount);

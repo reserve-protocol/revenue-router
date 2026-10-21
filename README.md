@@ -11,15 +11,15 @@ governed list of recipients, pro rata to their eUSD holdings.
 - **`poke()`** (permissionless). Reads every destination's eUSD balance, then sends the router's
   whole eUSD balance out pro rata to those balances. Destinations holding no eUSD get nothing.
   Rounding dust (< 1 wei per destination) stays for the next poke. Reverts while eUSD trading is
-  paused, below `MIN_POKE_AMOUNT`, or when no destination holds eUSD.
+  paused or eUSD is frozen, below `MIN_POKE_AMOUNT`, or when no destination holds eUSD.
 - **`setDestinations(address[])`** (governance). Replaces the whole list. Entries must be distinct
   and cannot be the zero address, the router, or eUSD.
 - **`sweep(token, to, amount)`** (governance). Emergency transfer of any token, including eUSD and
   tokens like USDT that return nothing from `transfer`.
 - **Governance** is any holder of the `OWNER` role on eUSD's Main, which is the eUSD governance
   timelock. Main is read once from `eUSD.main()` at construction.
-- **Paused and frozen states.** `poke()` reverts while eUSD trading is paused and ignores
-  issuance-paused and frozen. `sweep()` ignores all of them.
+- **Paused and frozen states.** `poke()` reverts while eUSD trading is paused or eUSD is frozen
+  (`tradingPausedOrFrozen()`) and ignores issuance-paused. `sweep()` ignores all of them.
 - **Spot-balance weights.** Destinations are a governance-approved whitelist, so a destination that
   games its balance around a poke can be removed.
 - **Not upgradeable, no pause.**

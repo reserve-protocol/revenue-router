@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: BlueOak-1.0.0
 pragma solidity 0.8.35;
 
-import {IMain} from "../../src/RevenueRouter.sol";
+import {IMain} from "../../src/interfaces/IRevenueRouter.sol";
 
 contract MockMain is IMain {
     mapping(bytes32 => mapping(address => bool)) public hasRole;
-    bool public tradingPaused;
+    bool public tradingPausedOrFrozen;
 
     function grantRole(bytes32 role, address account) external {
         hasRole[role][account] = true;
     }
 
-    function setTradingPaused(bool paused) external {
-        tradingPaused = paused;
+    function setTradingPausedOrFrozen(bool pausedOrFrozen) external {
+        tradingPausedOrFrozen = pausedOrFrozen;
     }
 }
 
