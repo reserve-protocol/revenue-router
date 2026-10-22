@@ -25,15 +25,15 @@ interface IRevenueRouter {
     event Poked(address indexed caller, uint256 amount);
     event Swept(address indexed token, address indexed to, uint256 amount);
 
-    error NotGovernance();
-    error ZeroAddress();
-    error TooManyDestinations(uint256 count);
-    error InvalidDestination(address account);
-    error InvalidMultiplier(address holder);
-    error DuplicateHolder(address holder);
-    error UnknownHolder(address holder);
-    error BelowMinimum(uint256 amount);
-    error NoHoldings();
+    error RevenueRouter__NotGovernance();
+    error RevenueRouter__ZeroAddress();
+    error RevenueRouter__TooManyDestinations(uint256 count);
+    error RevenueRouter__InvalidDestination(address account);
+    error RevenueRouter__InvalidMultiplier(address holder);
+    error RevenueRouter__DuplicateHolder(address holder);
+    error RevenueRouter__UnknownHolder(address holder);
+    error RevenueRouter__BelowMinimum(uint256 amount);
+    error RevenueRouter__NoHoldings();
 
     function eUSD() external view returns (IRToken);
 

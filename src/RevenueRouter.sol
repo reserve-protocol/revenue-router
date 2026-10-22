@@ -54,12 +54,12 @@ contract RevenueRouter is IRevenueRouter {
     mapping(address holder => Payout) private _payouts;
 
     modifier governance() {
-        require(main.hasRole(OWNER, msg.sender), NotGovernance());
+        require(main.hasRole(OWNER, msg.sender), RevenueRouter__NotGovernance());
         _;
     }
 
     constructor(IRToken eUSD_) {
-        require(address(eUSD_) != address(0), ZeroAddress());
+        require(address(eUSD_) != address(0), RevenueRouter__ZeroAddress());
         eUSD = eUSD_;
         main = eUSD_.main();
     }
@@ -81,22 +81,22 @@ contract RevenueRouter is IRevenueRouter {
             Destination calldata dest = dests[i];
             _checkAccount(dest.holder);
             _checkAccount(dest.recipient);
-            require(dest.multiplier != 0, InvalidMultiplier(dest.holder));
-            require(_holders.add(dest.holder), DuplicateHolder(dest.holder));
+            require(dest.multiplier != 0, RevenueRouter__InvalidMultiplier(dest.holder));
+            require(_holders.add(dest.holder), RevenueRouter__DuplicateHolder(dest.holder));
 
             _payouts[dest.holder] = Payout(dest.recipient, dest.multiplier);
             emit DestinationAdded(dest.holder, dest.recipient, dest.multiplier);
         }
 
         uint256 count = _holders.length();
-        require(count <= MAX_DESTINATIONS, TooManyDestinations(count));
+        require(count <= MAX_DESTINATIONS, RevenueRouter__TooManyDestinations(count));
     }
 
     /// Remove destinations from the list
     /// @param holders Holders of existing destinations
     function removeDestinations(address[] calldata holders) external governance {
         for (uint256 i = 0; i < holders.length; ++i) {
-            require(_holders.remove(holders[i]), UnknownHolder(holders[i]));
+            require(_holders.remove(holders[i]), RevenueRouter__UnknownHolder(holders[i]));
 
             delete _payouts[holders[i]];
             emit DestinationRemoved(holders[i]);
@@ -108,7 +108,7 @@ contract RevenueRouter is IRevenueRouter {
     /// router for the next poke. Ignores eUSD's paused and frozen states.
     function poke() external {
         uint256 amount = eUSD.balanceOf(address(this));
-        require(amount >= MIN_POKE_AMOUNT, BelowMinimum(amount));
+        require(amount >= MIN_POKE_AMOUNT, RevenueRouter__BelowMinimum(amount));
 
         address[] memory holders = _holders.values();
         uint256 len = holders.length;
@@ -121,7 +121,7 @@ contract RevenueRouter is IRevenueRouter {
             weights[i] = eUSD.balanceOf(holders[i]) * _payouts[holders[i]].multiplier;
             total += weights[i];
         }
-        require(total != 0, NoHoldings());
+        require(total != 0, RevenueRouter__NoHoldings());
 
         uint256 distributed;
         for (uint256 i = 0; i < len; ++i) {
@@ -144,7 +144,7 @@ contract RevenueRouter is IRevenueRouter {
     /// Handles tokens that return nothing on transfer (e.g. USDT).
     /// Ignores eUSD's paused and frozen states.
     function sweep(IERC20 token, address to, uint256 amount) external governance {
-        require(to != address(0), ZeroAddress());
+        require(to != address(0), RevenueRouter__ZeroAddress());
 
         token.safeTransfer(to, amount);
         emit Swept(address(token), to, amount);
@@ -153,7 +153,7 @@ contract RevenueRouter is IRevenueRouter {
     function _checkAccount(address account) private view {
         require(
             account != address(0) && account != address(this) && account != address(eUSD),
-            InvalidDestination(account)
+            RevenueRouter__InvalidDestination(account)
         );
     }
 }

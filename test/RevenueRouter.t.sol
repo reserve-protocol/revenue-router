@@ -106,9 +106,9 @@ contract RevenueRouterTest is Test {
 
     function test_destinations_onlyGovernance() public {
         vm.startPrank(alice);
-        vm.expectRevert(IRevenueRouter.NotGovernance.selector);
+        vm.expectRevert(IRevenueRouter.RevenueRouter__NotGovernance.selector);
         router.addDestinations(_dests(alice, bob));
-        vm.expectRevert(IRevenueRouter.NotGovernance.selector);
+        vm.expectRevert(IRevenueRouter.RevenueRouter__NotGovernance.selector);
         router.removeDestinations(new address[](0));
         vm.stopPrank();
     }
@@ -123,7 +123,11 @@ contract RevenueRouterTest is Test {
         _addDests(d);
 
         vm.prank(gov);
-        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.TooManyDestinations.selector, n + 1));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IRevenueRouter.RevenueRouter__TooManyDestinations.selector, n + 1
+            )
+        );
         router.addDestinations(_one(alice, alice, 1e18));
 
         // Removing one makes room again
@@ -138,7 +142,9 @@ contract RevenueRouterTest is Test {
             for (uint256 asHolder = 0; asHolder < 2; ++asHolder) {
                 vm.prank(gov);
                 vm.expectRevert(
-                    abi.encodeWithSelector(IRevenueRouter.InvalidDestination.selector, bad[i])
+                    abi.encodeWithSelector(
+                        IRevenueRouter.RevenueRouter__InvalidDestination.selector, bad[i]
+                    )
                 );
                 router.addDestinations(
                     asHolder == 1 ? _one(bad[i], alice, 1e18) : _one(alice, bad[i], 1e18)
@@ -147,7 +153,9 @@ contract RevenueRouterTest is Test {
         }
 
         vm.prank(gov);
-        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.InvalidMultiplier.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(IRevenueRouter.RevenueRouter__InvalidMultiplier.selector, alice)
+        );
         router.addDestinations(_one(alice, bob, 0));
     }
 
@@ -157,13 +165,17 @@ contract RevenueRouterTest is Test {
         d[0] = IRevenueRouter.Destination(alice, bob, 1e18);
         d[1] = IRevenueRouter.Destination(alice, carol, 1e18);
         vm.prank(gov);
-        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.DuplicateHolder.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(IRevenueRouter.RevenueRouter__DuplicateHolder.selector, alice)
+        );
         router.addDestinations(d);
 
         // Against an existing destination
         _addDests(_one(alice, bob, 1e18));
         vm.prank(gov);
-        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.DuplicateHolder.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(IRevenueRouter.RevenueRouter__DuplicateHolder.selector, alice)
+        );
         router.addDestinations(_one(alice, carol, 2e18));
     }
 
@@ -173,7 +185,9 @@ contract RevenueRouterTest is Test {
         h[0] = alice;
         h[1] = alice; // already removed by the first entry
         vm.prank(gov);
-        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.UnknownHolder.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(IRevenueRouter.RevenueRouter__UnknownHolder.selector, alice)
+        );
         router.removeDestinations(h);
     }
 
@@ -273,17 +287,19 @@ contract RevenueRouterTest is Test {
         eUSD.mint(alice, 1e18);
         uint256 amount = router.MIN_POKE_AMOUNT() - 1;
         eUSD.mint(address(router), amount);
-        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.BelowMinimum.selector, amount));
+        vm.expectRevert(
+            abi.encodeWithSelector(IRevenueRouter.RevenueRouter__BelowMinimum.selector, amount)
+        );
         router.poke();
     }
 
     function test_poke_noHoldings() public {
         eUSD.mint(address(router), router.MIN_POKE_AMOUNT());
-        vm.expectRevert(IRevenueRouter.NoHoldings.selector);
+        vm.expectRevert(IRevenueRouter.RevenueRouter__NoHoldings.selector);
         router.poke(); // no destinations
 
         _addDests(_dests(alice, bob));
-        vm.expectRevert(IRevenueRouter.NoHoldings.selector);
+        vm.expectRevert(IRevenueRouter.RevenueRouter__NoHoldings.selector);
         router.poke(); // destinations hold nothing
     }
 
@@ -343,19 +359,19 @@ contract RevenueRouterTest is Test {
         address eoa = makeAddr("eoa");
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, eoa));
         router.sweep(IERC20(eoa), carol, 1);
-        vm.expectRevert(IRevenueRouter.ZeroAddress.selector);
+        vm.expectRevert(IRevenueRouter.RevenueRouter__ZeroAddress.selector);
         router.sweep(IERC20(address(eUSD)), address(0), 1);
         vm.stopPrank();
     }
 
     function test_sweep_onlyGovernance() public {
         vm.prank(alice);
-        vm.expectRevert(IRevenueRouter.NotGovernance.selector);
+        vm.expectRevert(IRevenueRouter.RevenueRouter__NotGovernance.selector);
         router.sweep(IERC20(address(eUSD)), alice, 1);
     }
 
     function test_constructor_zeroAddress() public {
-        vm.expectRevert(IRevenueRouter.ZeroAddress.selector);
+        vm.expectRevert(IRevenueRouter.RevenueRouter__ZeroAddress.selector);
         new RevenueRouter(IRToken(address(0)));
     }
 }

@@ -84,7 +84,7 @@ contract RevenueRouterForkTest is Test {
         assertEq(router.destinations().length, 2);
 
         vm.prank(makeAddr("rando"));
-        vm.expectRevert(IRevenueRouter.NotGovernance.selector);
+        vm.expectRevert(IRevenueRouter.RevenueRouter__NotGovernance.selector);
         router.addDestinations(d);
     }
 
