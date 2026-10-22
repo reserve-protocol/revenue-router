@@ -112,14 +112,15 @@ contract RevenueRouter is IRevenueRouter {
         uint256[] memory weights = new uint256[](len);
         uint256 total;
         for (uint256 i = 0; i < len; ++i) {
-            // {qRTok} * D18{1}
-            weights[i] = eUSD.balanceOf(holders[i]) * _payouts[holders[i]].multiplier;
+            // {qRTok} = {qRTok} * D18{1} / D18
+            weights[i] =
+                Math.mulDiv(eUSD.balanceOf(holders[i]), _payouts[holders[i]].multiplier, 1e18);
             total += weights[i];
         }
         require(total != 0, RevenueRouter__ZeroHoldings());
 
         for (uint256 i = 0; i < len; ++i) {
-            // {qRTok} = {qRTok} * ({qRTok} * D18{1}) / ({qRTok} * D18{1})
+            // {qRTok} = {qRTok} * {qRTok} / {qRTok}
             uint256 share = Math.mulDiv(amount, weights[i], total);
             if (share == 0) {
                 continue;

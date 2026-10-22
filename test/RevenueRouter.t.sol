@@ -4,6 +4,7 @@ pragma solidity 0.8.35;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {RevenueRouter} from "../src/RevenueRouter.sol";
 import {IRToken, IRevenueRouter} from "../src/interfaces/IRevenueRouter.sol";
 import {MockMain, MockRToken, MockNoReturnToken, MockFalseToken} from "./mocks/Mocks.sol";
@@ -297,9 +298,10 @@ contract RevenueRouterTest is Test {
         uint96 mb,
         uint256 amount
     ) public {
-        vm.assume(uint256(a) + b > 0);
         ma = uint96(bound(ma, 1, type(uint96).max));
         mb = uint96(bound(mb, 1, type(uint96).max));
+        // Weights round down to whole {qRTok}
+        vm.assume(Math.mulDiv(a, ma, 1e18) + Math.mulDiv(b, mb, 1e18) > 0);
         // Wide enough that amount * weight overflows uint256
         amount = bound(amount, 0, type(uint256).max / 2);
         IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](2);

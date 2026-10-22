@@ -16,7 +16,7 @@ interface IRevenueRouter {
     struct Destination {
         address holder;
         address recipient;
-        uint96 multiplier; // D18{1} 1e18 = 1x; only ratios between destinations matter
+        uint96 multiplier; // D18{1} 1e18 = 1x
     }
 
     event DestinationAdded(address indexed holder, address indexed recipient, uint96 multiplier);

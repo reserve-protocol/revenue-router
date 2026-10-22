@@ -11,8 +11,8 @@ holders.
   RSR revenue to StRSR. The Distributor pushes eUSD with a plain transfer and no callback.
 - **Destinations.** Each is a `{holder, recipient, multiplier}` triple: `holder`'s eUSD balance
   times `multiplier` sets the weight, and `recipient` receives the revenue. Holder and recipient can
-  be the same address. `multiplier` is a `uint96` in D18 (`1e18` = 1x); only ratios between
-  destinations matter.
+  be the same address. `multiplier` is a `uint96` in D18 (`1e18` = 1x). The weight is
+  `mulDiv(balance, multiplier, 1e18)`, rounded down to whole wei.
 - **`poke()`** (permissionless). Reads every holder's eUSD balance, then sends the router's whole
   eUSD balance to the recipients pro rata to balance × multiplier, emitting `Distributed(holder,
   recipient, amount)` per payout. Holders with no eUSD earn nothing. Rounding dust (< 1 wei per
