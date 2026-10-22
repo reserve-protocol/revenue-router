@@ -57,7 +57,9 @@ contract RevenueRouterForkTest is Test {
 
     function setUp() public {
         string memory rpc = vm.envOr("MAINNET_RPC_URL", string(""));
-        if (bytes(rpc).length == 0) vm.skip(true);
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+        }
         vm.createSelectFork(rpc, FORK_BLOCK);
 
         main = IMainFull(address(EUSD.main()));
@@ -70,6 +72,7 @@ contract RevenueRouterForkTest is Test {
         for (uint256 i = 0; i < n; ++i) {
             d[i].holder = address(uint160(uint256(keccak256(abi.encode("holder", i)))));
             d[i].recipient = address(uint160(uint256(keccak256(abi.encode("recipient", i)))));
+            d[i].multiplier = 1e18;
             deal(address(EUSD), d[i].holder, (i + 1) * 1e18);
         }
     }
@@ -77,12 +80,12 @@ contract RevenueRouterForkTest is Test {
     function test_timelockIsOwner() public {
         IRevenueRouter.Destination[] memory d = _fundedDests(2);
         vm.prank(TIMELOCK);
-        router.setDestinations(d);
+        router.addDestinations(d);
         assertEq(router.destinations().length, 2);
 
         vm.prank(makeAddr("rando"));
         vm.expectRevert(IRevenueRouter.NotGovernance.selector);
-        router.setDestinations(d);
+        router.addDestinations(d);
     }
 
     /// Distributor -> router -> destinations, with the planned 80% eUSD / 20% RSR split
@@ -98,7 +101,7 @@ contract RevenueRouterForkTest is Test {
 
         IRevenueRouter.Destination[] memory d = _fundedDests(2); // holdings 1 : 2
         vm.prank(TIMELOCK);
-        router.setDestinations(d);
+        router.addDestinations(d);
 
         address trader = main.rTokenTrader();
         uint256 amount = 3000e18;
@@ -122,7 +125,7 @@ contract RevenueRouterForkTest is Test {
     function test_ignoresPausedAndFrozen() public {
         IRevenueRouter.Destination[] memory d = _fundedDests(2);
         vm.startPrank(TIMELOCK);
-        router.setDestinations(d);
+        router.addDestinations(d);
         main.grantRole(bytes32("PAUSER"), TIMELOCK);
         main.pauseTrading();
         main.pauseIssuance();
@@ -151,8 +154,8 @@ contract RevenueRouterForkTest is Test {
         _cool(d);
         vm.prank(TIMELOCK);
         uint256 g = gasleft();
-        router.setDestinations(d);
-        uint256 setGas = g - gasleft();
+        router.addDestinations(d);
+        uint256 addGas = g - gasleft();
 
         _cool(d);
         g = gasleft();
@@ -160,10 +163,10 @@ contract RevenueRouterForkTest is Test {
         uint256 pokeGas = g - gasleft();
 
         console.log("destinations", n);
-        console.log("setDestinations gas", setGas);
+        console.log("addDestinations gas", addGas);
         console.log("poke gas", pokeGas);
         console.log("poke gas per destination", pokeGas / n);
-        assertLt(setGas, GAS_BUDGET);
+        assertLt(addGas, GAS_BUDGET);
         assertLt(pokeGas, GAS_BUDGET);
     }
 

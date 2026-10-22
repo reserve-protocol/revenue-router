@@ -12,13 +12,15 @@ interface IRToken is IERC20 {
 }
 
 interface IRevenueRouter {
-    /// Revenue is weighted by `holder`'s eUSD balance and paid to `recipient`
+    /// Revenue is weighted by `holder`'s eUSD balance times `multiplier` and paid to `recipient`
     struct Destination {
         address holder;
         address recipient;
+        uint96 multiplier; // D18{1} 1e18 = 1x; only ratios between destinations matter
     }
 
-    event DestinationsSet(Destination[] destinations);
+    event DestinationAdded(address indexed holder, address indexed recipient, uint96 multiplier);
+    event DestinationRemoved(address indexed holder);
     event Distributed(address indexed holder, address indexed recipient, uint256 amount);
     event Poked(address indexed caller, uint256 amount);
     event Swept(address indexed token, address indexed to, uint256 amount);
@@ -27,7 +29,9 @@ interface IRevenueRouter {
     error ZeroAddress();
     error TooManyDestinations(uint256 count);
     error InvalidDestination(address account);
+    error InvalidMultiplier(address holder);
     error DuplicateHolder(address holder);
+    error UnknownHolder(address holder);
     error BelowMinimum(uint256 amount);
     error NoHoldings();
 
@@ -37,7 +41,9 @@ interface IRevenueRouter {
 
     function destinations() external view returns (Destination[] memory);
 
-    function setDestinations(Destination[] calldata dests) external;
+    function addDestinations(Destination[] calldata dests) external;
+
+    function removeDestinations(address[] calldata holders) external;
 
     function poke() external;
 

@@ -25,20 +25,36 @@ contract RevenueRouterTest is Test {
         router = new RevenueRouter(IRToken(address(eUSD)));
     }
 
-    /// Destinations that are their own recipients
+    /// Destinations that are their own recipients, at 1x
     function _dests(address a, address b)
         internal
         pure
         returns (IRevenueRouter.Destination[] memory d)
     {
         d = new IRevenueRouter.Destination[](2);
-        d[0] = IRevenueRouter.Destination(a, a);
-        d[1] = IRevenueRouter.Destination(b, b);
+        d[0] = IRevenueRouter.Destination(a, a, 1e18);
+        d[1] = IRevenueRouter.Destination(b, b, 1e18);
     }
 
-    function _setDests(IRevenueRouter.Destination[] memory d) internal {
+    function _one(address holder, address recipient, uint96 multiplier)
+        internal
+        pure
+        returns (IRevenueRouter.Destination[] memory d)
+    {
+        d = new IRevenueRouter.Destination[](1);
+        d[0] = IRevenueRouter.Destination(holder, recipient, multiplier);
+    }
+
+    function _addDests(IRevenueRouter.Destination[] memory d) internal {
         vm.prank(gov);
-        router.setDestinations(d);
+        router.addDestinations(d);
+    }
+
+    function _removeDest(address holder) internal {
+        address[] memory h = new address[](1);
+        h[0] = holder;
+        vm.prank(gov);
+        router.removeDestinations(h);
     }
 
     function _assertDests(
@@ -49,72 +65,116 @@ contract RevenueRouterTest is Test {
         for (uint256 i = 0; i < a.length; ++i) {
             assertEq(a[i].holder, b[i].holder);
             assertEq(a[i].recipient, b[i].recipient);
+            assertEq(a[i].multiplier, b[i].multiplier);
         }
     }
 
-    // === setDestinations ===
+    // === addDestinations / removeDestinations ===
 
-    function test_setDestinations() public {
-        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](2);
-        d[0] = IRevenueRouter.Destination(alice, carol);
-        d[1] = IRevenueRouter.Destination(bob, carol); // recipients may repeat
+    function test_addAndRemoveDestinations() public {
+        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](3);
+        d[0] = IRevenueRouter.Destination(alice, carol, 1e18);
+        d[1] = IRevenueRouter.Destination(bob, carol, 2e18); // recipients may repeat
+        d[2] = IRevenueRouter.Destination(carol, alice, 5e17);
+        for (uint256 i = 0; i < d.length; ++i) {
+            vm.expectEmit(address(router));
+            emit IRevenueRouter.DestinationAdded(d[i].holder, d[i].recipient, d[i].multiplier);
+        }
+        _addDests(d);
+        _assertDests(router.destinations(), d);
+
+        // Removal leaves the other entries intact
         vm.expectEmit(address(router));
-        emit IRevenueRouter.DestinationsSet(d);
-        _setDests(d);
-        _assertDests(router.destinations(), d);
+        emit IRevenueRouter.DestinationRemoved(alice);
+        _removeDest(alice);
+        IRevenueRouter.Destination[] memory left = new IRevenueRouter.Destination[](2);
+        left[0] = d[2]; // EnumerableSet moves the last entry into the removed slot
+        left[1] = d[1];
+        _assertDests(router.destinations(), left);
 
-        // Replacing with a shorter list drops the old entries
-        d = new IRevenueRouter.Destination[](1);
-        d[0] = IRevenueRouter.Destination(bob, alice);
-        _setDests(d);
-        _assertDests(router.destinations(), d);
+        // A removed holder can be re-added with a new recipient and multiplier
+        _addDests(_one(alice, bob, 3e18));
+        IRevenueRouter.Destination[] memory all = new IRevenueRouter.Destination[](3);
+        (all[0], all[1], all[2]) = (left[0], left[1], _one(alice, bob, 3e18)[0]);
+        _assertDests(router.destinations(), all);
 
-        _setDests(new IRevenueRouter.Destination[](0));
+        _removeDest(alice);
+        _removeDest(bob);
+        _removeDest(carol);
         assertEq(router.destinations().length, 0);
     }
 
-    function test_setDestinations_onlyGovernance() public {
-        vm.prank(alice);
+    function test_destinations_onlyGovernance() public {
+        vm.startPrank(alice);
         vm.expectRevert(IRevenueRouter.NotGovernance.selector);
-        router.setDestinations(_dests(alice, bob));
+        router.addDestinations(_dests(alice, bob));
+        vm.expectRevert(IRevenueRouter.NotGovernance.selector);
+        router.removeDestinations(new address[](0));
+        vm.stopPrank();
     }
 
-    function test_setDestinations_tooMany() public {
-        uint256 n = router.MAX_DESTINATIONS() + 1;
+    function test_addDestinations_tooMany() public {
+        uint256 n = router.MAX_DESTINATIONS();
         IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](n);
         for (uint256 i = 0; i < n; ++i) {
             address a = address(uint160(i + 1));
-            d[i] = IRevenueRouter.Destination(a, a);
+            d[i] = IRevenueRouter.Destination(a, a, 1e18);
         }
+        _addDests(d);
+
         vm.prank(gov);
-        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.TooManyDestinations.selector, n));
-        router.setDestinations(d);
+        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.TooManyDestinations.selector, n + 1));
+        router.addDestinations(_one(alice, alice, 1e18));
+
+        // Removing one makes room again
+        _removeDest(d[0].holder);
+        _addDests(_one(alice, alice, 1e18));
+        assertEq(router.destinations().length, n);
     }
 
-    function test_setDestinations_invalid() public {
+    function test_addDestinations_invalid() public {
         address[3] memory bad = [address(0), address(router), address(eUSD)];
-        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](1);
         for (uint256 i = 0; i < bad.length; ++i) {
             for (uint256 asHolder = 0; asHolder < 2; ++asHolder) {
-                d[0] = asHolder == 1
-                    ? IRevenueRouter.Destination(bad[i], alice)
-                    : IRevenueRouter.Destination(alice, bad[i]);
                 vm.prank(gov);
                 vm.expectRevert(
                     abi.encodeWithSelector(IRevenueRouter.InvalidDestination.selector, bad[i])
                 );
-                router.setDestinations(d);
+                router.addDestinations(
+                    asHolder == 1 ? _one(bad[i], alice, 1e18) : _one(alice, bad[i], 1e18)
+                );
             }
         }
+
+        vm.prank(gov);
+        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.InvalidMultiplier.selector, alice));
+        router.addDestinations(_one(alice, bob, 0));
     }
 
-    function test_setDestinations_duplicateHolder() public {
+    function test_addDestinations_duplicateHolder() public {
+        // Within one call
         IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](2);
-        d[0] = IRevenueRouter.Destination(alice, bob);
-        d[1] = IRevenueRouter.Destination(alice, carol);
+        d[0] = IRevenueRouter.Destination(alice, bob, 1e18);
+        d[1] = IRevenueRouter.Destination(alice, carol, 1e18);
         vm.prank(gov);
         vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.DuplicateHolder.selector, alice));
-        router.setDestinations(d);
+        router.addDestinations(d);
+
+        // Against an existing destination
+        _addDests(_one(alice, bob, 1e18));
+        vm.prank(gov);
+        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.DuplicateHolder.selector, alice));
+        router.addDestinations(_one(alice, carol, 2e18));
+    }
+
+    function test_removeDestinations_unknownHolder() public {
+        _addDests(_one(alice, bob, 1e18));
+        address[] memory h = new address[](2);
+        h[0] = alice;
+        h[1] = alice; // already removed by the first entry
+        vm.prank(gov);
+        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.UnknownHolder.selector, alice));
+        router.removeDestinations(h);
     }
 
     // === poke ===
@@ -123,10 +183,10 @@ contract RevenueRouterTest is Test {
         address dave = makeAddr("dave");
         address erin = makeAddr("erin");
         IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](3);
-        d[0] = IRevenueRouter.Destination(alice, dave);
-        d[1] = IRevenueRouter.Destination(bob, erin);
-        d[2] = IRevenueRouter.Destination(carol, dave);
-        _setDests(d);
+        d[0] = IRevenueRouter.Destination(alice, dave, 1e18);
+        d[1] = IRevenueRouter.Destination(bob, erin, 1e18);
+        d[2] = IRevenueRouter.Destination(carol, dave, 1e18);
+        _addDests(d);
         eUSD.mint(alice, 100e18);
         eUSD.mint(bob, 300e18);
         // carol holds nothing, so earns nothing
@@ -148,12 +208,29 @@ contract RevenueRouterTest is Test {
         assertEq(eUSD.balanceOf(address(router)), 0);
     }
 
+    /// Weight is balance times multiplier: 100 * 2x = 200 vs 300 * 0.5x = 150
+    function test_poke_multipliers() public {
+        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](2);
+        d[0] = IRevenueRouter.Destination(alice, alice, 2e18);
+        d[1] = IRevenueRouter.Destination(bob, bob, 5e17);
+        _addDests(d);
+        eUSD.mint(alice, 100e18);
+        eUSD.mint(bob, 300e18);
+        eUSD.mint(address(router), 700e18);
+
+        router.poke();
+
+        assertEq(eUSD.balanceOf(alice), 100e18 + 400e18);
+        assertEq(eUSD.balanceOf(bob), 300e18 + 300e18);
+        assertEq(eUSD.balanceOf(address(router)), 0);
+    }
+
     /// Each holder's payout lands on the other holder; weights must use pre-transfer balances
     function test_poke_crossedRecipients() public {
         IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](2);
-        d[0] = IRevenueRouter.Destination(alice, bob);
-        d[1] = IRevenueRouter.Destination(bob, alice);
-        _setDests(d);
+        d[0] = IRevenueRouter.Destination(alice, bob, 1e18);
+        d[1] = IRevenueRouter.Destination(bob, alice, 1e18);
+        _addDests(d);
         eUSD.mint(alice, 100e18);
         eUSD.mint(bob, 300e18);
         eUSD.mint(address(router), 1000e18);
@@ -167,7 +244,7 @@ contract RevenueRouterTest is Test {
 
     /// amount * balance overflows uint256 even though the share fits
     function test_poke_largeAmounts() public {
-        _setDests(_dests(alice, bob));
+        _addDests(_dests(alice, bob));
         eUSD.mint(alice, 2 ** 128);
         eUSD.mint(address(router), 2 ** 128);
 
@@ -178,7 +255,7 @@ contract RevenueRouterTest is Test {
     }
 
     function test_poke_dustStays() public {
-        _setDests(_dests(alice, bob));
+        _addDests(_dests(alice, bob));
         eUSD.mint(alice, 1);
         eUSD.mint(bob, 2);
         uint256 amount = router.MIN_POKE_AMOUNT() + 1; // not divisible by 3
@@ -192,7 +269,7 @@ contract RevenueRouterTest is Test {
     }
 
     function test_poke_belowMinimum() public {
-        _setDests(_dests(alice, bob));
+        _addDests(_dests(alice, bob));
         eUSD.mint(alice, 1e18);
         uint256 amount = router.MIN_POKE_AMOUNT() - 1;
         eUSD.mint(address(router), amount);
@@ -205,16 +282,27 @@ contract RevenueRouterTest is Test {
         vm.expectRevert(IRevenueRouter.NoHoldings.selector);
         router.poke(); // no destinations
 
-        _setDests(_dests(alice, bob));
+        _addDests(_dests(alice, bob));
         vm.expectRevert(IRevenueRouter.NoHoldings.selector);
         router.poke(); // destinations hold nothing
     }
 
-    function testFuzz_poke_neverOverspends(uint128 a, uint128 b, uint256 amount) public {
+    function testFuzz_poke_neverOverspends(
+        uint128 a,
+        uint128 b,
+        uint96 ma,
+        uint96 mb,
+        uint256 amount
+    ) public {
         vm.assume(uint256(a) + b > 0);
-        // Wide enough that amount * balance overflows uint256
+        ma = uint96(bound(ma, 1, type(uint96).max));
+        mb = uint96(bound(mb, 1, type(uint96).max));
+        // Wide enough that amount * weight overflows uint256
         amount = bound(amount, router.MIN_POKE_AMOUNT(), type(uint256).max / 2);
-        _setDests(_dests(alice, bob));
+        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](2);
+        d[0] = IRevenueRouter.Destination(alice, alice, ma);
+        d[1] = IRevenueRouter.Destination(bob, bob, mb);
+        _addDests(d);
         eUSD.mint(alice, a);
         eUSD.mint(bob, b);
         eUSD.mint(address(router), amount);
