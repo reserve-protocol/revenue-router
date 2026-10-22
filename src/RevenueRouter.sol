@@ -20,8 +20,10 @@ import {IMain, IRToken, IRevenueRouter} from "./interfaces/IRevenueRouter.sol";
  *   This contract ignores eUSD's paused and frozen states. Neither poke() nor sweep() checks
  *   them, and both keep working while eUSD is trading-paused, issuance-paused, or frozen.
  *
- *   Weights are spot balances read inside poke(). Destinations are a governance-approved
- *   whitelist, so a destination that games its balance around a poke can be removed.
+ *   Weights are spot balances read inside poke(), which anyone can call. Governance must only
+ *   add holders whose eUSD balance third parties cannot inflate, e.g. by depositing into a pool or
+ *   vault with a flash loan around a poke(). Removing such a holder afterwards does not recover a
+ *   payout already made.
  *
  *   Recipients receive a plain eUSD transfer and no callback.
  *
@@ -73,6 +75,9 @@ contract RevenueRouter is IRevenueRouter {
     /// @param dests Holders must be new and distinct; recipients may repeat. Neither may be zero,
     ///   this router, or eUSD itself. Multipliers must be nonzero.
     function addDestinations(Destination[] calldata dests) external governance {
+        uint256 count = _holders.length() + dests.length;
+        require(count <= MAX_DESTINATIONS, RevenueRouter__TooManyDestinations(count));
+
         for (uint256 i = 0; i < dests.length; ++i) {
             Destination calldata dest = dests[i];
             _checkAccount(dest.holder);
@@ -83,9 +88,6 @@ contract RevenueRouter is IRevenueRouter {
             _payouts[dest.holder] = Payout(dest.recipient, dest.multiplier);
             emit DestinationAdded(dest.holder, dest.recipient, dest.multiplier);
         }
-
-        uint256 count = _holders.length();
-        require(count <= MAX_DESTINATIONS, RevenueRouter__TooManyDestinations(count));
     }
 
     /// Remove destinations from the list

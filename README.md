@@ -16,10 +16,12 @@ holders.
 - **`poke()`** (permissionless). Reads every holder's eUSD balance, then sends the router's whole
   eUSD balance to the recipients pro rata to balance × multiplier, emitting `Distributed(holder,
   recipient, amount)` per payout. Holders with no eUSD earn nothing. Rounding dust (< 1 wei per
-  destination) stays for the next poke. Reverts when no holder holds eUSD.
+  destination) stays for the next poke. Reverts when every weight rounds to zero, for example when no holder holds eUSD.
 - **`addDestinations(Destination[])`** (governance). Appends to the list. Holders must be new and
   distinct; recipients may repeat. Neither can be the zero address, the router, or eUSD. The
-  multiplier must be nonzero. To change a destination, remove it and add it again.
+  multiplier must be nonzero. To change a destination, remove it and add it again in the same
+  governance proposal; otherwise a `poke()` between the two transactions pays the other
+  destinations the whole balance.
 - **`removeDestinations(address[] holders)`** (governance). Removes the destinations of `holders`.
   Reverts on a holder that is not in the list.
 - **`sweep(token, to, amount)`** (governance). Emergency transfer of any token, including eUSD and
@@ -28,14 +30,17 @@ holders.
   timelock. Main is read once from `eUSD.main()` at construction.
 - **Paused and frozen states are ignored.** Neither `poke()` nor `sweep()` checks them, and both
   keep working while eUSD is trading-paused, issuance-paused, or frozen.
-- **Spot-balance weights.** Destinations are a governance-approved whitelist, so a holder that
-  games its balance around a poke can be removed.
+- **Spot-balance weights.** `poke()` reads spot balances and anyone can call it, so governance
+  must only add holders whose eUSD balance third parties cannot inflate. For example, if a holder
+  is a vault that anyone can deposit into and that is also the recipient, an attacker can
+  flash-borrow eUSD, deposit, `poke()`, and redeem most of the payout. Removing the holder
+  afterwards does not recover that payout.
 - **Not upgradeable, and no pause of its own.**
 
 ## Limits
 
-`MAX_DESTINATIONS = 100`. The cap keeps every call under half of the EIP-7825 per-transaction gas cap (2^24 = 16,777,216),
-leaving headroom for future gas repricings. Worst cases were measured by `test_gas_maxDestinations`
+`MAX_DESTINATIONS = 100`. The cap keeps every call under half of the EIP-7825 per-transaction gas
+cap (2^24 = 16,777,216), leaving headroom for future gas repricings. Worst cases were measured by `test_gas_maxDestinations`
 on a mainnet fork, with all state cold, every holder holding eUSD, and every recipient holding none:
 
 | destinations | `addDestinations` (from empty) | `poke` |
@@ -43,10 +48,11 @@ on a mainnet fork, with all state cold, every holder holding eUSD, and every rec
 |          100 |                          7.34M |  3.73M |
 |          150 |                  10.99M (over) |  5.57M |
 
-`addDestinations` is the binding call: three fresh storage slots per destination (the set's value
-and index, plus the recipient and multiplier packed in one slot) at ~73k gas each destination,
-linear in n. Governance can split a large addition across calls. `poke` costs ~37k gas per
-destination when recipients start empty, and less once they hold eUSD. The numbers exclude intrinsic and calldata gas.
+`poke` is the binding call because it always covers every destination: ~37k gas per destination
+when recipients start empty, and less once they hold eUSD. `addDestinations` costs more per
+destination, ~73k for three fresh storage slots (the set's value and index, plus the recipient and
+multiplier packed in one slot), but governance can split a large addition across calls. The numbers
+exclude intrinsic and calldata gas.
 
 ## Development
 
