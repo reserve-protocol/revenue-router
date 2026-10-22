@@ -99,10 +99,12 @@ contract RevenueRouterTest is Test {
         (all[0], all[1], all[2]) = (left[0], left[1], _one(alice, bob, 3e18)[0]);
         _assertDests(router.destinations(), all);
 
-        _removeDest(alice);
-        _removeDest(bob);
-        _removeDest(carol);
-        assertEq(router.destinations().length, 0);
+        // Remove several in one call
+        address[] memory h = new address[](2);
+        (h[0], h[1]) = (alice, carol);
+        vm.prank(gov);
+        router.removeDestinations(h);
+        _assertDests(router.destinations(), _one(bob, carol, 2e18));
     }
 
     function test_destinations_onlyGovernance() public {
@@ -197,27 +199,33 @@ contract RevenueRouterTest is Test {
     function test_poke_proRata() public {
         address dave = makeAddr("dave");
         address erin = makeAddr("erin");
-        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](3);
+        address frank = makeAddr("frank");
+        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](4);
         d[0] = IRevenueRouter.Destination(alice, dave, 1e18);
         d[1] = IRevenueRouter.Destination(bob, erin, 1e18);
-        d[2] = IRevenueRouter.Destination(carol, dave, 1e18);
+        d[2] = IRevenueRouter.Destination(carol, dave, 1e18); // shares dave with alice
+        d[3] = IRevenueRouter.Destination(frank, erin, 1e18);
         _addDests(d);
         eUSD.mint(alice, 100e18);
         eUSD.mint(bob, 300e18);
-        // carol holds nothing, so earns nothing
+        eUSD.mint(carol, 100e18);
+        // frank holds nothing, so earns nothing
         eUSD.mint(address(router), 1000e18);
 
         vm.expectEmit(address(router));
-        emit IRevenueRouter.Distributed(alice, dave, 250e18);
+        emit IRevenueRouter.Distributed(alice, dave, 200e18);
         vm.expectEmit(address(router));
-        emit IRevenueRouter.Distributed(bob, erin, 750e18);
+        emit IRevenueRouter.Distributed(bob, erin, 600e18);
+        vm.expectEmit(address(router));
+        emit IRevenueRouter.Distributed(carol, dave, 200e18);
         router.poke();
 
         // Holders keep their balances; recipients get paid
         assertEq(eUSD.balanceOf(alice), 100e18);
         assertEq(eUSD.balanceOf(bob), 300e18);
-        assertEq(eUSD.balanceOf(dave), 250e18);
-        assertEq(eUSD.balanceOf(erin), 750e18);
+        assertEq(eUSD.balanceOf(carol), 100e18);
+        assertEq(eUSD.balanceOf(dave), 400e18);
+        assertEq(eUSD.balanceOf(erin), 600e18);
         assertEq(eUSD.balanceOf(address(router)), 0);
     }
 
@@ -255,15 +263,15 @@ contract RevenueRouterTest is Test {
         assertEq(eUSD.balanceOf(address(router)), 0);
     }
 
-    /// amount * balance overflows uint256 even though the share fits
+    /// balance * multiplier and amount * weight both overflow uint256, though weight and share fit
     function test_poke_largeAmounts() public {
-        _addDests(_dests(alice, bob));
-        eUSD.mint(alice, 2 ** 128);
+        _addDests(_one(alice, alice, 2 ** 80));
+        eUSD.mint(alice, 2 ** 200);
         eUSD.mint(address(router), 2 ** 128);
 
         router.poke();
 
-        assertEq(eUSD.balanceOf(alice), 2 ** 129);
+        assertEq(eUSD.balanceOf(alice), 2 ** 200 + 2 ** 128);
         assertEq(eUSD.balanceOf(address(router)), 0);
     }
 
