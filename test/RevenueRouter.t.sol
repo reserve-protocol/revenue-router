@@ -148,6 +148,35 @@ contract RevenueRouterTest is Test {
         assertEq(eUSD.balanceOf(address(router)), 0);
     }
 
+    /// Each holder's payout lands on the other holder; weights must use pre-transfer balances
+    function test_poke_crossedRecipients() public {
+        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](2);
+        d[0] = IRevenueRouter.Destination(alice, bob);
+        d[1] = IRevenueRouter.Destination(bob, alice);
+        _setDests(d);
+        eUSD.mint(alice, 100e18);
+        eUSD.mint(bob, 300e18);
+        eUSD.mint(address(router), 1000e18);
+
+        router.poke();
+
+        assertEq(eUSD.balanceOf(alice), 100e18 + 750e18);
+        assertEq(eUSD.balanceOf(bob), 300e18 + 250e18);
+        assertEq(eUSD.balanceOf(address(router)), 0);
+    }
+
+    /// amount * balance overflows uint256 even though the share fits
+    function test_poke_largeAmounts() public {
+        _setDests(_dests(alice, bob));
+        eUSD.mint(alice, 2 ** 128);
+        eUSD.mint(address(router), 2 ** 128);
+
+        router.poke();
+
+        assertEq(eUSD.balanceOf(alice), 2 ** 129);
+        assertEq(eUSD.balanceOf(address(router)), 0);
+    }
+
     function test_poke_dustStays() public {
         _setDests(_dests(alice, bob));
         eUSD.mint(alice, 1);
@@ -181,9 +210,10 @@ contract RevenueRouterTest is Test {
         router.poke(); // destinations hold nothing
     }
 
-    function testFuzz_poke_neverOverspends(uint96 a, uint96 b, uint128 amount) public {
+    function testFuzz_poke_neverOverspends(uint128 a, uint128 b, uint256 amount) public {
         vm.assume(uint256(a) + b > 0);
-        amount = uint128(bound(amount, router.MIN_POKE_AMOUNT(), type(uint128).max));
+        // Wide enough that amount * balance overflows uint256
+        amount = bound(amount, router.MIN_POKE_AMOUNT(), type(uint256).max / 2);
         _setDests(_dests(alice, bob));
         eUSD.mint(alice, a);
         eUSD.mint(bob, b);
