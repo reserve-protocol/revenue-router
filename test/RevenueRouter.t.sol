@@ -181,19 +181,6 @@ contract RevenueRouterTest is Test {
         router.poke(); // destinations hold nothing
     }
 
-    function test_poke_tradingPausedOrFrozen() public {
-        _setDests(_dests(alice, bob));
-        eUSD.mint(alice, 1e18);
-        eUSD.mint(address(router), 1e18);
-        main.setTradingPausedOrFrozen(true);
-        vm.expectRevert(IRevenueRouter.TradingPausedOrFrozen.selector);
-        router.poke();
-
-        main.setTradingPausedOrFrozen(false);
-        router.poke();
-        assertEq(eUSD.balanceOf(alice), 2e18);
-    }
-
     function testFuzz_poke_neverOverspends(uint96 a, uint96 b, uint128 amount) public {
         vm.assume(uint256(a) + b > 0);
         amount = uint128(bound(amount, router.MIN_POKE_AMOUNT(), type(uint128).max));

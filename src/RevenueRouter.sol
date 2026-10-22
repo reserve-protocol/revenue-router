@@ -15,15 +15,15 @@ import {IMain, IRToken, IRevenueRouter} from "./interfaces/IRevenueRouter.sol";
  *   Governance is any account holding the OWNER role on eUSD's Main (the eUSD governance
  *   timelock).
  *
- *   poke() reverts while eUSD trading is paused or eUSD is frozen. It ignores issuance-paused.
- *   sweep() ignores all of eUSD's paused and frozen states.
+ *   This contract ignores eUSD's paused and frozen states. Neither poke() nor sweep() checks
+ *   them, and both keep working while eUSD is trading-paused, issuance-paused, or frozen.
  *
  *   Weights are spot balances read inside poke(). Destinations are a governance-approved
  *   whitelist, so a destination that games its balance around a poke can be removed.
  *
  *   Recipients receive a plain eUSD transfer and no callback.
  *
- *   Not upgradeable, no pause. Governance can replace the destination list and sweep any token.
+ *   Not upgradeable, and has no pause of its own. Governance can replace the destination list and sweep any token.
  */
 contract RevenueRouter is IRevenueRouter {
     using SafeERC20 for IERC20;
@@ -89,10 +89,8 @@ contract RevenueRouter is IRevenueRouter {
 
     /// Forward the router's whole eUSD balance to recipients, pro rata to their holders' eUSD
     /// balances. Rounding dust (< 1 wei per destination) stays in the router for the next poke.
-    /// Reverts while eUSD trading is paused or eUSD is frozen; ignores issuance-paused.
+    /// Ignores eUSD's paused and frozen states.
     function poke() external {
-        if (main.tradingPausedOrFrozen()) revert TradingPausedOrFrozen();
-
         uint256 amount = eUSD.balanceOf(address(this));
         if (amount < MIN_POKE_AMOUNT) revert BelowMinimum(amount);
 

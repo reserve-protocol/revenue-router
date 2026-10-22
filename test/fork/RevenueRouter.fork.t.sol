@@ -118,45 +118,24 @@ contract RevenueRouterForkTest is Test {
         assertLt(EUSD.balanceOf(address(router)), 2);
     }
 
-    /// poke() reverts while trading is paused; sweep() still works
-    function test_tradingPaused() public {
+    /// poke() and sweep() ignore eUSD's paused and frozen states
+    function test_ignoresPausedAndFrozen() public {
         IRevenueRouter.Destination[] memory d = _fundedDests(2);
         vm.startPrank(TIMELOCK);
         router.setDestinations(d);
         main.grantRole(bytes32("PAUSER"), TIMELOCK);
         main.pauseTrading();
-        vm.stopPrank();
-
-        deal(address(EUSD), address(router), 1e18);
-        vm.expectRevert(IRevenueRouter.TradingPausedOrFrozen.selector);
-        router.poke();
-
-        vm.prank(TIMELOCK);
-        router.sweep(IERC20(address(EUSD)), TIMELOCK, 1e18);
-        assertEq(EUSD.balanceOf(address(router)), 0);
-    }
-
-    /// poke() ignores issuance-paused and reverts while frozen; sweep() still works
-    function test_issuancePausedAndFrozen() public {
-        IRevenueRouter.Destination[] memory d = _fundedDests(2);
-        vm.startPrank(TIMELOCK);
-        router.setDestinations(d);
-        main.grantRole(bytes32("PAUSER"), TIMELOCK);
         main.pauseIssuance();
-        vm.stopPrank();
-
-        deal(address(EUSD), address(router), 1e18);
-        router.poke();
-        assertLt(EUSD.balanceOf(address(router)), 2);
-
-        vm.prank(TIMELOCK);
         main.freezeForever();
-        assertTrue(main.frozen() && !main.tradingPaused());
+        vm.stopPrank();
+        assertTrue(main.tradingPaused() && main.issuancePaused() && main.frozen());
+
+        deal(address(EUSD), address(router), 3e18);
+        router.poke();
+        assertEq(EUSD.balanceOf(d[0].recipient), 1e18);
+        assertEq(EUSD.balanceOf(d[1].recipient), 2e18);
 
         deal(address(EUSD), address(router), 1e18);
-        vm.expectRevert(IRevenueRouter.TradingPausedOrFrozen.selector);
-        router.poke();
-
         vm.prank(TIMELOCK);
         router.sweep(IERC20(address(EUSD)), TIMELOCK, 1e18);
         assertEq(EUSD.balanceOf(address(router)), 0);
