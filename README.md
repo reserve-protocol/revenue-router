@@ -38,13 +38,12 @@ on a mainnet fork, with all state cold, every holder holding eUSD, and every rec
 
 | destinations | `setDestinations` (from empty) | `poke` |
 | -----------: | -----------------------------: | -----: |
-|          100 |                          7.02M |  3.67M |
-|          110 |                          7.98M |  4.04M |
-|          115 |                   8.48M (over) |  4.22M |
+|          100 |                          6.98M |  3.66M |
+|          150 |                  10.47M (over) |  5.47M |
 
-`setDestinations` is the binding call: two fresh storage slots (44.2k gas) per destination plus
-the O(n²) duplicate-holder check. `poke` costs ~36.7k gas per destination when recipients start
-empty, and less once they hold eUSD. The numbers exclude intrinsic and calldata gas.
+`setDestinations` is the binding call: three fresh storage slots per destination (the set's value
+and index, plus the recipient mapping) at ~70k gas each destination, linear in n. `poke` costs
+~36.5k gas per destination when recipients start empty, and less once they hold eUSD. The numbers exclude intrinsic and calldata gas.
 
 ## Development
 
