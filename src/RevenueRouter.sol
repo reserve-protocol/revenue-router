@@ -3,6 +3,7 @@ pragma solidity 0.8.35;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IMain, IRToken, IRevenueRouter} from "./interfaces/IRevenueRouter.sol";
 
 /**
@@ -26,6 +27,7 @@ import {IMain, IRToken, IRevenueRouter} from "./interfaces/IRevenueRouter.sol";
  */
 contract RevenueRouter is IRevenueRouter {
     using SafeERC20 for IERC20;
+    using EnumerableSet for EnumerableSet.AddressSet;
 
     bytes32 public constant OWNER = bytes32("OWNER");
 
@@ -39,7 +41,8 @@ contract RevenueRouter is IRevenueRouter {
     IRToken public immutable eUSD;
     IMain public immutable main; // eUSD's Main never changes
 
-    Destination[] private _destinations;
+    EnumerableSet.AddressSet private _holders;
+    mapping(address holder => address recipient) private _recipients;
 
     modifier governance() {
         if (!main.hasRole(OWNER, msg.sender)) revert NotGovernance();
@@ -52,8 +55,12 @@ contract RevenueRouter is IRevenueRouter {
         main = eUSD_.main();
     }
 
-    function destinations() external view returns (Destination[] memory) {
-        return _destinations;
+    function destinations() external view returns (Destination[] memory dests) {
+        address[] memory holders = _holders.values();
+        dests = new Destination[](holders.length);
+        for (uint256 i = 0; i < holders.length; ++i) {
+            dests[i] = Destination(holders[i], _recipients[holders[i]]);
+        }
     }
 
     /// Replace the destination list
@@ -63,15 +70,18 @@ contract RevenueRouter is IRevenueRouter {
         uint256 len = dests.length;
         if (len > MAX_DESTINATIONS) revert TooManyDestinations(len);
 
-        delete _destinations;
+        address[] memory oldHolders = _holders.values();
+        for (uint256 i = 0; i < oldHolders.length; ++i) {
+            delete _recipients[oldHolders[i]];
+        }
+        _holders.clear();
+
         for (uint256 i = 0; i < len; ++i) {
             Destination calldata dest = dests[i];
             _checkAccount(dest.holder);
             _checkAccount(dest.recipient);
-            for (uint256 j = 0; j < i; ++j) {
-                if (dests[j].holder == dest.holder) revert DuplicateHolder(dest.holder);
-            }
-            _destinations.push(dest);
+            if (!_holders.add(dest.holder)) revert DuplicateHolder(dest.holder);
+            _recipients[dest.holder] = dest.recipient;
         }
 
         emit DestinationsSet(dests);
@@ -86,14 +96,14 @@ contract RevenueRouter is IRevenueRouter {
         uint256 amount = eUSD.balanceOf(address(this));
         if (amount < MIN_POKE_AMOUNT) revert BelowMinimum(amount);
 
-        Destination[] memory dests = _destinations;
-        uint256 len = dests.length;
+        address[] memory holders = _holders.values();
+        uint256 len = holders.length;
 
         // Read every balance before transferring, so earlier transfers don't shift later weights
         uint256[] memory balances = new uint256[](len);
         uint256 total;
         for (uint256 i = 0; i < len; ++i) {
-            balances[i] = eUSD.balanceOf(dests[i].holder);
+            balances[i] = eUSD.balanceOf(holders[i]);
             total += balances[i];
         }
         if (total == 0) revert NoHoldings();
@@ -105,8 +115,9 @@ contract RevenueRouter is IRevenueRouter {
             if (share == 0) continue;
 
             distributed += share;
-            IERC20(eUSD).safeTransfer(dests[i].recipient, share);
-            emit Distributed(dests[i].holder, dests[i].recipient, share);
+            address recipient = _recipients[holders[i]];
+            IERC20(eUSD).safeTransfer(recipient, share);
+            emit Distributed(holders[i], recipient, share);
         }
 
         emit Poked(msg.sender, distributed);
