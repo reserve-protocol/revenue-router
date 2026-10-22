@@ -22,7 +22,6 @@ interface IRevenueRouter {
     event DestinationAdded(address indexed holder, address indexed recipient, uint96 multiplier);
     event DestinationRemoved(address indexed holder);
     event Distributed(address indexed holder, address indexed recipient, uint256 amount);
-    event Poked(address indexed caller, uint256 amount);
     event Swept(address indexed token, address indexed to, uint256 amount);
 
     error RevenueRouter__NotGovernance();
@@ -32,8 +31,7 @@ interface IRevenueRouter {
     error RevenueRouter__InvalidMultiplier(address holder);
     error RevenueRouter__DuplicateHolder(address holder);
     error RevenueRouter__UnknownHolder(address holder);
-    error RevenueRouter__BelowMinimum(uint256 amount);
-    error RevenueRouter__NoHoldings();
+    error RevenueRouter__ZeroHoldings();
 
     function eUSD() external view returns (IRToken);
 

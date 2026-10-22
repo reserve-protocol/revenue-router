@@ -15,9 +15,8 @@ holders.
   destinations matter.
 - **`poke()`** (permissionless). Reads every holder's eUSD balance, then sends the router's whole
   eUSD balance to the recipients pro rata to balance × multiplier, emitting `Distributed(holder,
-  recipient, amount)` per payout and `Poked(caller, total)` at the end. Holders with no eUSD earn
-  nothing. Rounding dust (< 1 wei per destination) stays for the next poke. Reverts below
-  `MIN_POKE_AMOUNT` or when no holder holds eUSD.
+  recipient, amount)` per payout. Holders with no eUSD earn nothing. Rounding dust (< 1 wei per
+  destination) stays for the next poke. Reverts when no holder holds eUSD.
 - **`addDestinations(Destination[])`** (governance). Appends to the list. Holders must be new and
   distinct; recipients may repeat. Neither can be the zero address, the router, or eUSD. The
   multiplier must be nonzero. To change a destination, remove it and add it again.
@@ -35,17 +34,14 @@ holders.
 
 ## Limits
 
-`MAX_DESTINATIONS = 100` and `MIN_POKE_AMOUNT = MAX_DESTINATIONS` wei, so every destination slot
-can receive at least 1 wei on average.
-
-The cap keeps every call under half of the EIP-7825 per-transaction gas cap (2^24 = 16,777,216),
+`MAX_DESTINATIONS = 100`. The cap keeps every call under half of the EIP-7825 per-transaction gas cap (2^24 = 16,777,216),
 leaving headroom for future gas repricings. Worst cases were measured by `test_gas_maxDestinations`
 on a mainnet fork, with all state cold, every holder holding eUSD, and every recipient holding none:
 
 | destinations | `addDestinations` (from empty) | `poke` |
 | -----------: | -----------------------------: | -----: |
-|          100 |                          7.34M |  3.74M |
-|          150 |                  10.99M (over) |  5.58M |
+|          100 |                          7.34M |  3.73M |
+|          150 |                  10.99M (over) |  5.57M |
 
 `addDestinations` is the binding call: three fresh storage slots per destination (the set's value
 and index, plus the recipient and multiplier packed in one slot) at ~73k gas each destination,

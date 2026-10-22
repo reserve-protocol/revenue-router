@@ -38,9 +38,6 @@ contract RevenueRouter is IRevenueRouter {
     /// see the README for the derivation.
     uint256 public constant MAX_DESTINATIONS = 100;
 
-    /// {qRTok} poke() reverts below this eUSD balance: 1 wei per destination slot
-    uint256 public constant MIN_POKE_AMOUNT = MAX_DESTINATIONS;
-
     IRToken public immutable eUSD;
     IMain public immutable main; // eUSD's Main never changes
 
@@ -59,7 +56,6 @@ contract RevenueRouter is IRevenueRouter {
     }
 
     constructor(IRToken eUSD_) {
-        require(address(eUSD_) != address(0), RevenueRouter__ZeroAddress());
         eUSD = eUSD_;
         main = eUSD_.main();
     }
@@ -108,7 +104,6 @@ contract RevenueRouter is IRevenueRouter {
     /// router for the next poke. Ignores eUSD's paused and frozen states.
     function poke() external {
         uint256 amount = eUSD.balanceOf(address(this));
-        require(amount >= MIN_POKE_AMOUNT, RevenueRouter__BelowMinimum(amount));
 
         address[] memory holders = _holders.values();
         uint256 len = holders.length;
@@ -121,9 +116,8 @@ contract RevenueRouter is IRevenueRouter {
             weights[i] = eUSD.balanceOf(holders[i]) * _payouts[holders[i]].multiplier;
             total += weights[i];
         }
-        require(total != 0, RevenueRouter__NoHoldings());
+        require(total != 0, RevenueRouter__ZeroHoldings());
 
-        uint256 distributed;
         for (uint256 i = 0; i < len; ++i) {
             // {qRTok} = {qRTok} * ({qRTok} * D18{1}) / ({qRTok} * D18{1})
             uint256 share = Math.mulDiv(amount, weights[i], total);
@@ -131,13 +125,10 @@ contract RevenueRouter is IRevenueRouter {
                 continue;
             }
 
-            distributed += share;
             address recipient = _payouts[holders[i]].recipient;
             IERC20(eUSD).safeTransfer(recipient, share);
             emit Distributed(holders[i], recipient, share);
         }
-
-        emit Poked(msg.sender, distributed);
     }
 
     /// Emergency transfer of any token held by the router, including eUSD.

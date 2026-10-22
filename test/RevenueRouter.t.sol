@@ -210,8 +210,6 @@ contract RevenueRouterTest is Test {
         emit IRevenueRouter.Distributed(alice, dave, 250e18);
         vm.expectEmit(address(router));
         emit IRevenueRouter.Distributed(bob, erin, 750e18);
-        vm.expectEmit(address(router));
-        emit IRevenueRouter.Poked(address(this), 1000e18);
         router.poke();
 
         // Holders keep their balances; recipients get paid
@@ -272,7 +270,7 @@ contract RevenueRouterTest is Test {
         _addDests(_dests(alice, bob));
         eUSD.mint(alice, 1);
         eUSD.mint(bob, 2);
-        uint256 amount = router.MIN_POKE_AMOUNT() + 1; // not divisible by 3
+        uint256 amount = 101; // not divisible by 3
         eUSD.mint(address(router), amount);
 
         router.poke();
@@ -282,24 +280,13 @@ contract RevenueRouterTest is Test {
         assertEq(eUSD.balanceOf(address(router)), amount - amount / 3 - (amount * 2) / 3);
     }
 
-    function test_poke_belowMinimum() public {
-        _addDests(_dests(alice, bob));
-        eUSD.mint(alice, 1e18);
-        uint256 amount = router.MIN_POKE_AMOUNT() - 1;
-        eUSD.mint(address(router), amount);
-        vm.expectRevert(
-            abi.encodeWithSelector(IRevenueRouter.RevenueRouter__BelowMinimum.selector, amount)
-        );
-        router.poke();
-    }
-
-    function test_poke_noHoldings() public {
-        eUSD.mint(address(router), router.MIN_POKE_AMOUNT());
-        vm.expectRevert(IRevenueRouter.RevenueRouter__NoHoldings.selector);
+    function test_poke_zeroHoldings() public {
+        eUSD.mint(address(router), 100);
+        vm.expectRevert(IRevenueRouter.RevenueRouter__ZeroHoldings.selector);
         router.poke(); // no destinations
 
         _addDests(_dests(alice, bob));
-        vm.expectRevert(IRevenueRouter.RevenueRouter__NoHoldings.selector);
+        vm.expectRevert(IRevenueRouter.RevenueRouter__ZeroHoldings.selector);
         router.poke(); // destinations hold nothing
     }
 
@@ -314,7 +301,7 @@ contract RevenueRouterTest is Test {
         ma = uint96(bound(ma, 1, type(uint96).max));
         mb = uint96(bound(mb, 1, type(uint96).max));
         // Wide enough that amount * weight overflows uint256
-        amount = bound(amount, router.MIN_POKE_AMOUNT(), type(uint256).max / 2);
+        amount = bound(amount, 0, type(uint256).max / 2);
         IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](2);
         d[0] = IRevenueRouter.Destination(alice, alice, ma);
         d[1] = IRevenueRouter.Destination(bob, bob, mb);
@@ -370,8 +357,9 @@ contract RevenueRouterTest is Test {
         router.sweep(IERC20(address(eUSD)), alice, 1);
     }
 
+    /// eUSD.main() reverts on a non-contract
     function test_constructor_zeroAddress() public {
-        vm.expectRevert(IRevenueRouter.RevenueRouter__ZeroAddress.selector);
+        vm.expectRevert();
         new RevenueRouter(IRToken(address(0)));
     }
 }
