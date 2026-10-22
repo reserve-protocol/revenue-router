@@ -5,8 +5,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface IMain {
     function hasRole(bytes32 role, address account) external view returns (bool);
-
-    function tradingPausedOrFrozen() external view returns (bool);
 }
 
 interface IRToken is IERC20 {
@@ -30,7 +28,6 @@ interface IRevenueRouter {
     error TooManyDestinations(uint256 count);
     error InvalidDestination(address account);
     error DuplicateHolder(address holder);
-    error TradingPausedOrFrozen();
     error BelowMinimum(uint256 amount);
     error NoHoldings();
 

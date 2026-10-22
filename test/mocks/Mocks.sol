@@ -5,14 +5,9 @@ import {IMain} from "../../src/interfaces/IRevenueRouter.sol";
 
 contract MockMain is IMain {
     mapping(bytes32 => mapping(address => bool)) public hasRole;
-    bool public tradingPausedOrFrozen;
 
     function grantRole(bytes32 role, address account) external {
         hasRole[role][account] = true;
-    }
-
-    function setTradingPausedOrFrozen(bool pausedOrFrozen) external {
-        tradingPausedOrFrozen = pausedOrFrozen;
     }
 }
 
