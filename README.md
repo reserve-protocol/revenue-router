@@ -1,45 +1,50 @@
 # revenue-router
 
 A revenue destination for the Reserve Protocol `Distributor` that forwards the eUSD it receives to a
-governed list of recipients, pro rata to their eUSD holdings.
+governed list of recipients, pro rata to the eUSD balances of a paired list of holders.
 
 ## Behavior
 
 - **Funding.** eUSD governance points part of eUSD's revenue at the router through
   `Distributor.setDistributions`; the planned split is 80% of eUSD revenue to the router and 20% of
   RSR revenue to StRSR. The Distributor pushes eUSD with a plain transfer and no callback.
-- **`poke()`** (permissionless). Reads every destination's eUSD balance, then sends the router's
-  whole eUSD balance out pro rata to those balances. Destinations holding no eUSD get nothing.
-  Rounding dust (< 1 wei per destination) stays for the next poke. Reverts while eUSD trading is
-  paused or eUSD is frozen, below `MIN_POKE_AMOUNT`, or when no destination holds eUSD.
-- **`setDestinations(address[])`** (governance). Replaces the whole list. Entries must be distinct
-  and cannot be the zero address, the router, or eUSD.
+- **Destinations.** Each is a `{holder, recipient}` pair: `holder`'s eUSD balance sets the weight,
+  and `recipient` receives the revenue. They can be the same address.
+- **`poke()`** (permissionless). Reads every holder's eUSD balance, then sends the router's whole
+  eUSD balance to the recipients pro rata to those balances, emitting `Distributed(holder,
+  recipient, amount)` per payout and `Poked(caller, total)` at the end. Holders with no eUSD earn
+  nothing. Rounding dust (< 1 wei per destination) stays for the next poke. Reverts while eUSD
+  trading is paused or eUSD is frozen, below `MIN_POKE_AMOUNT`, or when no holder holds eUSD.
+- **`setDestinations(Destination[])`** (governance). Replaces the whole list. Holders must be
+  distinct; recipients may repeat. Neither can be the zero address, the router, or eUSD.
 - **`sweep(token, to, amount)`** (governance). Emergency transfer of any token, including eUSD and
   tokens like USDT that return nothing from `transfer`.
 - **Governance** is any holder of the `OWNER` role on eUSD's Main, which is the eUSD governance
   timelock. Main is read once from `eUSD.main()` at construction.
 - **Paused and frozen states.** `poke()` reverts while eUSD trading is paused or eUSD is frozen
   (`tradingPausedOrFrozen()`) and ignores issuance-paused. `sweep()` ignores all of them.
-- **Spot-balance weights.** Destinations are a governance-approved whitelist, so a destination that
+- **Spot-balance weights.** Destinations are a governance-approved whitelist, so a holder that
   games its balance around a poke can be removed.
 - **Not upgradeable, no pause.**
 
 ## Limits
 
-`MAX_DESTINATIONS = 160` and `MIN_POKE_AMOUNT = MAX_DESTINATIONS` wei, so every destination slot
+`MAX_DESTINATIONS = 100` and `MIN_POKE_AMOUNT = MAX_DESTINATIONS` wei, so every destination slot
 can receive at least 1 wei on average.
 
 The cap keeps every call under half of the EIP-7825 per-transaction gas cap (2^24 = 16,777,216),
 leaving headroom for future gas repricings. Worst cases were measured by `test_gas_maxDestinations`
-on a mainnet fork, with all state cold and every destination holding eUSD:
+on a mainnet fork, with all state cold, every holder holding eUSD, and every recipient holding none:
 
 | destinations | `setDestinations` (from empty) | `poke` |
 | -----------: | -----------------------------: | -----: |
-|          160 |                          7.72M |  2.13M |
-|          170 |                   8.46M (over) |  2.26M |
+|          100 |                          7.02M |  3.67M |
+|          110 |                          7.98M |  4.04M |
+|          115 |                   8.48M (over) |  4.22M |
 
-`setDestinations` is the binding call: 22.1k gas per fresh storage slot plus the O(n²) duplicate
-check. `poke` costs ~13.3k gas per destination. The numbers exclude intrinsic and calldata gas.
+`setDestinations` is the binding call: two fresh storage slots (44.2k gas) per destination plus
+the O(n²) duplicate-holder check. `poke` costs ~36.7k gas per destination when recipients start
+empty, and less once they hold eUSD. The numbers exclude intrinsic and calldata gas.
 
 ## Development
 

@@ -25,27 +25,51 @@ contract RevenueRouterTest is Test {
         router = new RevenueRouter(IRToken(address(eUSD)));
     }
 
-    function _dests(address a, address b) internal pure returns (address[] memory d) {
-        d = new address[](2);
-        d[0] = a;
-        d[1] = b;
+    /// Destinations that are their own recipients
+    function _dests(address a, address b)
+        internal
+        pure
+        returns (IRevenueRouter.Destination[] memory d)
+    {
+        d = new IRevenueRouter.Destination[](2);
+        d[0] = IRevenueRouter.Destination(a, a);
+        d[1] = IRevenueRouter.Destination(b, b);
     }
 
-    function _setDests(address[] memory d) internal {
+    function _setDests(IRevenueRouter.Destination[] memory d) internal {
         vm.prank(gov);
         router.setDestinations(d);
+    }
+
+    function _assertDests(
+        IRevenueRouter.Destination[] memory a,
+        IRevenueRouter.Destination[] memory b
+    ) internal pure {
+        assertEq(a.length, b.length);
+        for (uint256 i = 0; i < a.length; ++i) {
+            assertEq(a[i].holder, b[i].holder);
+            assertEq(a[i].recipient, b[i].recipient);
+        }
     }
 
     // === setDestinations ===
 
     function test_setDestinations() public {
-        address[] memory d = _dests(alice, bob);
+        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](2);
+        d[0] = IRevenueRouter.Destination(alice, carol);
+        d[1] = IRevenueRouter.Destination(bob, carol); // recipients may repeat
         vm.expectEmit(address(router));
         emit IRevenueRouter.DestinationsSet(d);
         _setDests(d);
-        assertEq(router.destinations(), d);
+        _assertDests(router.destinations(), d);
 
-        _setDests(new address[](0));
+        // Replacing with a shorter list drops the old entries
+        d = new IRevenueRouter.Destination[](1);
+        d[0] = IRevenueRouter.Destination(bob, alice);
+        _setDests(d);
+        _assertDests(router.destinations(), d);
+
+        _setDests(new IRevenueRouter.Destination[](0));
         assertEq(router.destinations().length, 0);
     }
 
@@ -57,9 +81,10 @@ contract RevenueRouterTest is Test {
 
     function test_setDestinations_tooMany() public {
         uint256 n = router.MAX_DESTINATIONS() + 1;
-        address[] memory d = new address[](n);
+        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](n);
         for (uint256 i = 0; i < n; ++i) {
-            d[i] = address(uint160(i + 1));
+            address a = address(uint160(i + 1));
+            d[i] = IRevenueRouter.Destination(a, a);
         }
         vm.prank(gov);
         vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.TooManyDestinations.selector, n));
@@ -68,39 +93,58 @@ contract RevenueRouterTest is Test {
 
     function test_setDestinations_invalid() public {
         address[3] memory bad = [address(0), address(router), address(eUSD)];
+        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](1);
         for (uint256 i = 0; i < bad.length; ++i) {
-            vm.prank(gov);
-            vm.expectRevert(
-                abi.encodeWithSelector(IRevenueRouter.InvalidDestination.selector, bad[i])
-            );
-            router.setDestinations(_dests(alice, bad[i]));
+            for (uint256 asHolder = 0; asHolder < 2; ++asHolder) {
+                d[0] = asHolder == 1
+                    ? IRevenueRouter.Destination(bad[i], alice)
+                    : IRevenueRouter.Destination(alice, bad[i]);
+                vm.prank(gov);
+                vm.expectRevert(
+                    abi.encodeWithSelector(IRevenueRouter.InvalidDestination.selector, bad[i])
+                );
+                router.setDestinations(d);
+            }
         }
     }
 
-    function test_setDestinations_duplicate() public {
+    function test_setDestinations_duplicateHolder() public {
+        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](2);
+        d[0] = IRevenueRouter.Destination(alice, bob);
+        d[1] = IRevenueRouter.Destination(alice, carol);
         vm.prank(gov);
-        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.DuplicateDestination.selector, alice));
-        router.setDestinations(_dests(alice, alice));
+        vm.expectRevert(abi.encodeWithSelector(IRevenueRouter.DuplicateHolder.selector, alice));
+        router.setDestinations(d);
     }
 
     // === poke ===
 
     function test_poke_proRata() public {
-        address[] memory d = new address[](3);
-        (d[0], d[1], d[2]) = (alice, bob, carol);
+        address dave = makeAddr("dave");
+        address erin = makeAddr("erin");
+        IRevenueRouter.Destination[] memory d = new IRevenueRouter.Destination[](3);
+        d[0] = IRevenueRouter.Destination(alice, dave);
+        d[1] = IRevenueRouter.Destination(bob, erin);
+        d[2] = IRevenueRouter.Destination(carol, dave);
         _setDests(d);
         eUSD.mint(alice, 100e18);
         eUSD.mint(bob, 300e18);
-        // carol holds nothing and receives nothing
+        // carol holds nothing, so earns nothing
         eUSD.mint(address(router), 1000e18);
 
+        vm.expectEmit(address(router));
+        emit IRevenueRouter.Distributed(alice, dave, 250e18);
+        vm.expectEmit(address(router));
+        emit IRevenueRouter.Distributed(bob, erin, 750e18);
         vm.expectEmit(address(router));
         emit IRevenueRouter.Poked(address(this), 1000e18);
         router.poke();
 
-        assertEq(eUSD.balanceOf(alice), 100e18 + 250e18);
-        assertEq(eUSD.balanceOf(bob), 300e18 + 750e18);
-        assertEq(eUSD.balanceOf(carol), 0);
+        // Holders keep their balances; recipients get paid
+        assertEq(eUSD.balanceOf(alice), 100e18);
+        assertEq(eUSD.balanceOf(bob), 300e18);
+        assertEq(eUSD.balanceOf(dave), 250e18);
+        assertEq(eUSD.balanceOf(erin), 750e18);
         assertEq(eUSD.balanceOf(address(router)), 0);
     }
 

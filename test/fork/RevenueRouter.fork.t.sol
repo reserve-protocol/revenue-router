@@ -64,19 +64,21 @@ contract RevenueRouterForkTest is Test {
         router = new RevenueRouter(EUSD);
     }
 
-    function _fundedDests(uint256 n) internal returns (address[] memory d) {
-        d = new address[](n);
+    /// Holder i holds (i + 1) eUSD; every recipient is a fresh address holding none
+    function _fundedDests(uint256 n) internal returns (IRevenueRouter.Destination[] memory d) {
+        d = new IRevenueRouter.Destination[](n);
         for (uint256 i = 0; i < n; ++i) {
-            d[i] = address(uint160(uint256(keccak256(abi.encode("dest", i)))));
-            deal(address(EUSD), d[i], (i + 1) * 1e18);
+            d[i].holder = address(uint160(uint256(keccak256(abi.encode("holder", i)))));
+            d[i].recipient = address(uint160(uint256(keccak256(abi.encode("recipient", i)))));
+            deal(address(EUSD), d[i].holder, (i + 1) * 1e18);
         }
     }
 
     function test_timelockIsOwner() public {
-        address[] memory d = _fundedDests(2);
+        IRevenueRouter.Destination[] memory d = _fundedDests(2);
         vm.prank(TIMELOCK);
         router.setDestinations(d);
-        assertEq(router.destinations(), d);
+        assertEq(router.destinations().length, 2);
 
         vm.prank(makeAddr("rando"));
         vm.expectRevert(IRevenueRouter.NotGovernance.selector);
@@ -94,7 +96,7 @@ contract RevenueRouterForkTest is Test {
         vm.prank(TIMELOCK);
         distributor.setDistributions(dests, shares);
 
-        address[] memory d = _fundedDests(2); // holdings 1 : 2
+        IRevenueRouter.Destination[] memory d = _fundedDests(2); // holdings 1 : 2
         vm.prank(TIMELOCK);
         router.setDestinations(d);
 
@@ -111,14 +113,14 @@ contract RevenueRouterForkTest is Test {
         assertLe(received, amount);
 
         router.poke();
-        assertEq(EUSD.balanceOf(d[0]), 1e18 + (received * 1e18) / 3e18);
-        assertEq(EUSD.balanceOf(d[1]), 2e18 + (received * 2e18) / 3e18);
+        assertEq(EUSD.balanceOf(d[0].recipient), (received * 1e18) / 3e18);
+        assertEq(EUSD.balanceOf(d[1].recipient), (received * 2e18) / 3e18);
         assertLt(EUSD.balanceOf(address(router)), 2);
     }
 
     /// poke() reverts while trading is paused; sweep() still works
     function test_tradingPaused() public {
-        address[] memory d = _fundedDests(2);
+        IRevenueRouter.Destination[] memory d = _fundedDests(2);
         vm.startPrank(TIMELOCK);
         router.setDestinations(d);
         main.grantRole(bytes32("PAUSER"), TIMELOCK);
@@ -136,7 +138,7 @@ contract RevenueRouterForkTest is Test {
 
     /// poke() ignores issuance-paused and reverts while frozen; sweep() still works
     function test_issuancePausedAndFrozen() public {
-        address[] memory d = _fundedDests(2);
+        IRevenueRouter.Destination[] memory d = _fundedDests(2);
         vm.startPrank(TIMELOCK);
         router.setDestinations(d);
         main.grantRole(bytes32("PAUSER"), TIMELOCK);
@@ -160,10 +162,11 @@ contract RevenueRouterForkTest is Test {
         assertEq(EUSD.balanceOf(address(router)), 0);
     }
 
-    /// Worst-case gas at MAX_DESTINATIONS: every destination holds eUSD and all state is cold
+    /// Worst-case gas at MAX_DESTINATIONS: every holder holds eUSD, every recipient holds none,
+    /// and all state is cold
     function test_gas_maxDestinations() public {
         uint256 n = router.MAX_DESTINATIONS();
-        address[] memory d = _fundedDests(n);
+        IRevenueRouter.Destination[] memory d = _fundedDests(n);
         deal(address(EUSD), address(router), 1_000_000e18);
 
         _cool(d);
@@ -185,7 +188,7 @@ contract RevenueRouterForkTest is Test {
         assertLt(pokeGas, GAS_BUDGET);
     }
 
-    function _cool(address[] memory d) internal {
+    function _cool(IRevenueRouter.Destination[] memory d) internal {
         vm.cool(address(router));
         vm.cool(address(EUSD));
         vm.cool(address(main));
@@ -194,7 +197,8 @@ contract RevenueRouterForkTest is Test {
         vm.cool(address(uint160(uint256(vm.load(address(EUSD), implSlot)))));
         vm.cool(address(uint160(uint256(vm.load(address(main), implSlot)))));
         for (uint256 i = 0; i < d.length; ++i) {
-            vm.cool(d[i]);
+            vm.cool(d[i].holder);
+            vm.cool(d[i].recipient);
         }
     }
 }
