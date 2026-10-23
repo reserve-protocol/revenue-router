@@ -43,14 +43,14 @@ contract RevenueRouter is IRevenueRouter {
     IRToken public immutable eUSD;
     IMain public immutable main; // eUSD's Main never changes
 
-    /// Packed into one slot
-    struct Payout {
+    /// Storage value of a Destination; the holder is the mapping key. Packed into one slot.
+    struct DestinationConfig {
         address recipient;
         uint96 multiplier; // D18{1}
     }
 
     EnumerableSet.AddressSet private _holders;
-    mapping(address holder => Payout) private _payouts;
+    mapping(address holder => DestinationConfig) private _configs;
 
     modifier governance() {
         require(main.hasRole(OWNER, msg.sender), RevenueRouter__NotGovernance());
@@ -66,8 +66,8 @@ contract RevenueRouter is IRevenueRouter {
         address[] memory holders = _holders.values();
         dests = new Destination[](holders.length);
         for (uint256 i = 0; i < holders.length; ++i) {
-            Payout memory payout = _payouts[holders[i]];
-            dests[i] = Destination(holders[i], payout.recipient, payout.multiplier);
+            DestinationConfig memory config = _configs[holders[i]];
+            dests[i] = Destination(holders[i], config.recipient, config.multiplier);
         }
     }
 
@@ -85,7 +85,7 @@ contract RevenueRouter is IRevenueRouter {
             require(dest.multiplier != 0, RevenueRouter__InvalidMultiplier(dest.holder));
             require(_holders.add(dest.holder), RevenueRouter__DuplicateHolder(dest.holder));
 
-            _payouts[dest.holder] = Payout(dest.recipient, dest.multiplier);
+            _configs[dest.holder] = DestinationConfig(dest.recipient, dest.multiplier);
             emit DestinationAdded(dest.holder, dest.recipient, dest.multiplier);
         }
     }
@@ -96,7 +96,7 @@ contract RevenueRouter is IRevenueRouter {
         for (uint256 i = 0; i < holders.length; ++i) {
             require(_holders.remove(holders[i]), RevenueRouter__UnknownHolder(holders[i]));
 
-            delete _payouts[holders[i]];
+            delete _configs[holders[i]];
             emit DestinationRemoved(holders[i]);
         }
     }
@@ -116,7 +116,7 @@ contract RevenueRouter is IRevenueRouter {
         for (uint256 i = 0; i < len; ++i) {
             // {qRTok} = {qRTok} * D18{1} / D18
             weights[i] =
-                Math.mulDiv(eUSD.balanceOf(holders[i]), _payouts[holders[i]].multiplier, 1e18);
+                Math.mulDiv(eUSD.balanceOf(holders[i]), _configs[holders[i]].multiplier, 1e18);
             total += weights[i];
         }
         require(total != 0, RevenueRouter__ZeroHoldings());
@@ -128,7 +128,7 @@ contract RevenueRouter is IRevenueRouter {
                 continue;
             }
 
-            address recipient = _payouts[holders[i]].recipient;
+            address recipient = _configs[holders[i]].recipient;
             IERC20(eUSD).safeTransfer(recipient, share);
             emit Distributed(holders[i], recipient, share);
         }
