@@ -45,12 +45,12 @@ on a mainnet fork, with all state cold, every holder holding eUSD, and every rec
 
 | destinations | `addDestinations` (from empty) | `poke` |
 | -----------: | -----------------------------: | -----: |
-|          100 |                          7.34M |  3.73M |
-|          150 |                  10.99M (over) |  5.57M |
+|          100 |                          7.22M |  3.70M |
+|          150 |                  10.82M (over) |  5.55M |
 
 `poke` is the binding call because it always covers every destination: ~37k gas per destination
 when recipients start empty, and less once they hold eUSD. `addDestinations` costs more per
-destination, ~73k for three fresh storage slots (the set's value and index, plus the recipient and
+destination, ~72k for three fresh storage slots (the set's value and index, plus the recipient and
 multiplier packed in one slot), but governance can split a large addition across calls. The numbers
 exclude intrinsic and calldata gas.
 
