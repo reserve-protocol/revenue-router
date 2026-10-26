@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BlueOak-1.0.0
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
 import {IMain} from "../../src/interfaces/IRevenueRouter.sol";
