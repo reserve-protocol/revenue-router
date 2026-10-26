@@ -11,7 +11,8 @@ import {IMain, IRToken, IRevenueRouter} from "./interfaces/IRevenueRouter.sol";
  * @title RevenueRouter
  * @notice A Distributor revenue destination for eUSD. Anyone can call poke() to forward the
  *   router's entire eUSD balance to a governed list of destinations. Each destination pairs a
- *   holder, whose spot eUSD balance sets its weight, with a recipient, which receives its share.
+ *   holder, whose spot eUSD balance times the destination's multiplier sets its weight, with a
+ *   recipient, which receives its share.
  *
  *   Governance is any account holding the OWNER role on eUSD's Main (the eUSD governance
  *   timelock).
@@ -19,12 +20,15 @@ import {IMain, IRToken, IRevenueRouter} from "./interfaces/IRevenueRouter.sol";
  *   This contract ignores eUSD's paused and frozen states. Neither poke() nor sweep() checks
  *   them, and both keep working while eUSD is trading-paused, issuance-paused, or frozen.
  *
- *   Weights are spot balances read inside poke(). Destinations are a governance-approved
- *   whitelist, so a destination that games its balance around a poke can be removed.
+ *   Weights are spot balances read inside poke(), which anyone can call. Governance must only
+ *   add holders whose eUSD balance third parties cannot inflate, e.g. by depositing into a pool or
+ *   vault with a flash loan around a poke(). Removing such a holder afterwards does not recover a
+ *   payout already made.
  *
  *   Recipients receive a plain eUSD transfer and no callback.
  *
- *   Not upgradeable, and has no pause of its own. Governance can replace the destination list and sweep any token.
+ *   Not upgradeable, and has no pause of its own. Governance can add and remove destinations and
+ *   sweep any token.
  */
 contract RevenueRouter is IRevenueRouter {
     using SafeERC20 for IERC20;
@@ -32,26 +36,28 @@ contract RevenueRouter is IRevenueRouter {
 
     bytes32 public constant OWNER = bytes32("OWNER");
 
-    /// Max number of destinations. Bounds the worst-case gas of poke() and setDestinations();
+    /// Max number of destinations. Bounds the worst-case gas of poke() and addDestinations();
     /// see the README for the derivation.
     uint256 public constant MAX_DESTINATIONS = 100;
-
-    /// {qRTok} poke() reverts below this eUSD balance: 1 wei per destination slot
-    uint256 public constant MIN_POKE_AMOUNT = MAX_DESTINATIONS;
 
     IRToken public immutable eUSD;
     IMain public immutable main; // eUSD's Main never changes
 
+    /// Storage value of a Destination; the holder is the mapping key. Packed into one slot.
+    struct DestinationConfig {
+        address recipient;
+        uint96 multiplier; // D18{1}
+    }
+
     EnumerableSet.AddressSet private _holders;
-    mapping(address holder => address recipient) private _recipients;
+    mapping(address holder => DestinationConfig) private _configs;
 
     modifier governance() {
-        if (!main.hasRole(OWNER, msg.sender)) revert NotGovernance();
+        require(main.hasRole(OWNER, msg.sender), RevenueRouter__NotGovernance());
         _;
     }
 
     constructor(IRToken eUSD_) {
-        if (address(eUSD_) == address(0)) revert ZeroAddress();
         eUSD = eUSD_;
         main = eUSD_.main();
     }
@@ -60,81 +66,88 @@ contract RevenueRouter is IRevenueRouter {
         address[] memory holders = _holders.values();
         dests = new Destination[](holders.length);
         for (uint256 i = 0; i < holders.length; ++i) {
-            dests[i] = Destination(holders[i], _recipients[holders[i]]);
+            DestinationConfig memory config = _configs[holders[i]];
+            dests[i] = Destination(holders[i], config.recipient, config.multiplier);
         }
     }
 
-    /// Replace the destination list
-    /// @param dests Holders must be distinct; recipients may repeat. Neither may be zero, this
-    ///   router, or eUSD itself.
-    function setDestinations(Destination[] calldata dests) external governance {
-        uint256 len = dests.length;
-        if (len > MAX_DESTINATIONS) revert TooManyDestinations(len);
+    /// Add destinations to the list
+    /// @param dests Holders must be new and distinct; recipients may repeat. Neither may be zero,
+    ///   this router, or eUSD itself. Multipliers must be nonzero.
+    function addDestinations(Destination[] calldata dests) external governance {
+        uint256 count = _holders.length() + dests.length;
+        require(count <= MAX_DESTINATIONS, RevenueRouter__TooManyDestinations(count));
 
-        address[] memory oldHolders = _holders.values();
-        for (uint256 i = 0; i < oldHolders.length; ++i) {
-            delete _recipients[oldHolders[i]];
-        }
-        _holders.clear();
-
-        for (uint256 i = 0; i < len; ++i) {
+        for (uint256 i = 0; i < dests.length; ++i) {
             Destination calldata dest = dests[i];
             _checkAccount(dest.holder);
             _checkAccount(dest.recipient);
-            if (!_holders.add(dest.holder)) revert DuplicateHolder(dest.holder);
-            _recipients[dest.holder] = dest.recipient;
-        }
+            require(dest.multiplier != 0, RevenueRouter__InvalidMultiplier(dest.holder));
+            require(_holders.add(dest.holder), RevenueRouter__DuplicateHolder(dest.holder));
 
-        emit DestinationsSet(dests);
+            _configs[dest.holder] = DestinationConfig(dest.recipient, dest.multiplier);
+            emit DestinationAdded(dest.holder, dest.recipient, dest.multiplier);
+        }
+    }
+
+    /// Remove destinations from the list
+    /// @param holders Holders of existing destinations
+    function removeDestinations(address[] calldata holders) external governance {
+        for (uint256 i = 0; i < holders.length; ++i) {
+            require(_holders.remove(holders[i]), RevenueRouter__UnknownHolder(holders[i]));
+
+            delete _configs[holders[i]];
+            emit DestinationRemoved(holders[i]);
+        }
     }
 
     /// Forward the router's whole eUSD balance to recipients, pro rata to their holders' eUSD
-    /// balances. Rounding dust (< 1 wei per destination) stays in the router for the next poke.
-    /// Ignores eUSD's paused and frozen states.
+    /// balances times their multipliers. Rounding dust (< 1 wei per destination) stays in the
+    /// router for the next poke. Ignores eUSD's paused and frozen states.
     function poke() external {
         uint256 amount = eUSD.balanceOf(address(this));
-        if (amount < MIN_POKE_AMOUNT) revert BelowMinimum(amount);
 
         address[] memory holders = _holders.values();
         uint256 len = holders.length;
 
         // Read every balance before transferring, so earlier transfers don't shift later weights
-        uint256[] memory balances = new uint256[](len);
+        uint256[] memory weights = new uint256[](len);
         uint256 total;
         for (uint256 i = 0; i < len; ++i) {
-            balances[i] = eUSD.balanceOf(holders[i]);
-            total += balances[i];
+            // {qRTok} = {qRTok} * D18{1} / D18
+            weights[i] =
+                Math.mulDiv(eUSD.balanceOf(holders[i]), _configs[holders[i]].multiplier, 1e18);
+            total += weights[i];
         }
-        if (total == 0) revert NoHoldings();
+        require(total != 0, RevenueRouter__ZeroHoldings());
 
-        uint256 distributed;
         for (uint256 i = 0; i < len; ++i) {
             // {qRTok} = {qRTok} * {qRTok} / {qRTok}
-            uint256 share = Math.mulDiv(amount, balances[i], total);
-            if (share == 0) continue;
+            uint256 share = Math.mulDiv(amount, weights[i], total);
+            if (share == 0) {
+                continue;
+            }
 
-            distributed += share;
-            address recipient = _recipients[holders[i]];
+            address recipient = _configs[holders[i]].recipient;
             IERC20(eUSD).safeTransfer(recipient, share);
             emit Distributed(holders[i], recipient, share);
         }
-
-        emit Poked(msg.sender, distributed);
     }
 
     /// Emergency transfer of any token held by the router, including eUSD.
     /// Handles tokens that return nothing on transfer (e.g. USDT).
     /// Ignores eUSD's paused and frozen states.
     function sweep(IERC20 token, address to, uint256 amount) external governance {
-        if (to == address(0)) revert ZeroAddress();
+        require(to != address(0), RevenueRouter__ZeroAddress());
 
         token.safeTransfer(to, amount);
         emit Swept(address(token), to, amount);
     }
 
     function _checkAccount(address account) private view {
-        if (account == address(0) || account == address(this) || account == address(eUSD)) {
-            revert InvalidDestination(account);
-        }
+        require(
+            account != address(0) && account != address(this) && account != address(eUSD),
+            RevenueRouter__InvalidDestination(account)
+        );
     }
 }
