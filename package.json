@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "eUSD revenue destination for the Reserve Protocol Distributor",
-  "license": "BlueOak-1.0.0",
+  "license": "MIT",
   "scripts": {
     "compile": "forge compile",
     "test": "forge test --no-match-path 'test/fork/*'",
