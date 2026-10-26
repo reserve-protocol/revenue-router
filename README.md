@@ -37,6 +37,12 @@ holders.
   afterwards does not recover that payout.
 - **Not upgradeable, and no pause of its own.**
 
+## Deployments
+
+| network  | address                                                                                                                 | commit    |
+| -------- | ----------------------------------------------------------------------------------------------------------------------- | --------- |
+| mainnet  | [`0xdfD0CF858afe6010C83238461C6d7142d1b5265d`](https://etherscan.io/address/0xdfD0CF858afe6010C83238461C6d7142d1b5265d) | `4f889a3` |
+
 ## Limits
 
 `MAX_DESTINATIONS = 100`. The cap keeps every call under half of the EIP-7825 per-transaction gas
