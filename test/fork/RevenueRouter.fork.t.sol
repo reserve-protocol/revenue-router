@@ -3,6 +3,7 @@ pragma solidity 0.8.35;
 
 import {Test, console} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {RevenueRouter} from "../../src/RevenueRouter.sol";
 import {IRToken, IRevenueRouter} from "../../src/interfaces/IRevenueRouter.sol";
 
@@ -11,16 +12,68 @@ struct RevenueShare {
     uint16 rsrDist;
 }
 
+struct RevenueTotals {
+    uint24 rTokenTotal;
+    uint24 rsrTotal;
+}
+
 interface IDistributor {
     function setDistributions(address[] calldata dests, RevenueShare[] calldata shares) external;
 
-    function distribute(address erc20, uint256 amount) external;
+    function totals() external view returns (RevenueTotals memory);
+}
+
+interface IRevenueTrader {
+    function distributeTokenToBuy() external;
+}
+
+interface IStRSR {
+    function stake(uint256 rsrAmount) external;
+
+    function delegate(address delegatee) external;
+}
+
+interface IGovernor {
+    function propose(
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata calldatas,
+        string calldata description
+    ) external returns (uint256 proposalId);
+
+    function castVote(uint256 proposalId, uint8 support) external returns (uint256);
+
+    function queue(
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata calldatas,
+        bytes32 descriptionHash
+    ) external returns (uint256);
+
+    function execute(
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata calldatas,
+        bytes32 descriptionHash
+    ) external payable returns (uint256);
+
+    function state(uint256 proposalId) external view returns (uint8);
+
+    function proposalSnapshot(uint256 proposalId) external view returns (uint256);
+
+    function proposalDeadline(uint256 proposalId) external view returns (uint256);
+
+    function proposalEta(uint256 proposalId) external view returns (uint256);
 }
 
 interface IMainFull {
     function distributor() external view returns (IDistributor);
 
-    function rTokenTrader() external view returns (address);
+    function rTokenTrader() external view returns (IRevenueTrader);
+
+    function rsr() external view returns (IERC20);
+
+    function stRSR() external view returns (IStRSR);
 
     function grantRole(bytes32 role, address account) external;
 
@@ -37,15 +90,15 @@ interface IMainFull {
     function issuancePaused() external view returns (bool);
 }
 
-interface IApprove {
-    function approve(address spender, uint256 amount) external returns (bool);
-}
-
-/// Fork tests against live eUSD. Skipped unless MAINNET_RPC_URL is set.
+/// Fork tests against live eUSD. MAINNET_RPC_URL overrides the default public RPC.
 contract RevenueRouterForkTest is Test {
-    uint256 constant FORK_BLOCK = 26_243_013;
+    uint256 constant FORK_BLOCK = 26_290_000;
     IRToken constant EUSD = IRToken(0xA0d69E286B938e21CBf7E51D71F6A4c8918f482F);
+    IGovernor constant GOVERNOR = IGovernor(0x96dC1C14D3D5e2dDAa52368aDfe6E6b20b976832);
     address constant TIMELOCK = 0xd979Cf15F7275a3DF838513aB911587d23b6D29e;
+    IRevenueRouter constant DEPLOYED_ROUTER =
+        IRevenueRouter(0xdfD0CF858afe6010C83238461C6d7142d1b5265d);
+    address constant RSR_SLOW_WALLET = 0x6bab6EB87Aa5a1e4A8310C73bDAAA8A5dAAd81C1;
     address constant FURNACE = address(1);
     address constant ST_RSR = address(2);
 
@@ -56,10 +109,8 @@ contract RevenueRouterForkTest is Test {
     RevenueRouter router;
 
     function setUp() public {
-        string memory rpc = vm.envOr("MAINNET_RPC_URL", string(""));
-        if (bytes(rpc).length == 0) {
-            vm.skip(true);
-        }
+        string memory rpc =
+            vm.envOr("MAINNET_RPC_URL", string("https://mainnet.gateway.tenderly.co"));
         vm.createSelectFork(rpc, FORK_BLOCK);
 
         main = IMainFull(address(EUSD.main()));
@@ -77,6 +128,24 @@ contract RevenueRouterForkTest is Test {
         }
     }
 
+    /// Placeholder destinations: real eUSD holders at FORK_BLOCK, not the planned list. Replace
+    /// with the proposal's destinations once final.
+    function _proposedDests() internal returns (IRevenueRouter.Destination[] memory d) {
+        d = new IRevenueRouter.Destination[](3);
+        // Base L1StandardBridge, holding the eUSD bridged to Base
+        d[0] = IRevenueRouter.Destination(
+            0x3154Cf16ccdb4C6d922629664174b904d80F2C35, makeAddr("recipient0"), 1e18
+        );
+        // Curve eUSD/FRAXBP pool
+        d[1] = IRevenueRouter.Destination(
+            0xAEda92e6A3B1028edc139A4ae56Ec881f3064D4F, makeAddr("recipient1"), 2e18
+        );
+        // Arbitrum L1ERC20Gateway, holding the eUSD bridged to Arbitrum
+        d[2] = IRevenueRouter.Destination(
+            0xa3A7B6F88361F48403514059F1F16C8E78d60EeC, makeAddr("recipient2"), 0.5e18
+        );
+    }
+
     function test_timelockIsOwner() public {
         IRevenueRouter.Destination[] memory d = _fundedDests(2);
         vm.prank(TIMELOCK);
@@ -88,37 +157,59 @@ contract RevenueRouterForkTest is Test {
         router.addDestinations(d);
     }
 
-    /// Distributor -> router -> destinations, with the planned 80% eUSD / 20% RSR split
-    function test_distributorToDestinations() public {
-        address[] memory dests = new address[](3);
-        RevenueShare[] memory shares = new RevenueShare[](3);
-        (dests[0], shares[0]) = (FURNACE, RevenueShare(0, 0));
-        (dests[1], shares[1]) = (ST_RSR, RevenueShare(0, 2000));
-        (dests[2], shares[2]) = (address(router), RevenueShare(8000, 0));
+    /// The planned proposal, built the way Register builds it (register#1146): one Governor
+    /// proposal that sets the 80% eUSD / 20% RSR revenue split, then adds the router's
+    /// destinations. Runs against the deployed router through eUSD's Governor, timelock,
+    /// Distributor, and RevenueTrader.
+    function test_governanceProposal() public {
         IDistributor distributor = main.distributor();
-        vm.prank(TIMELOCK);
-        distributor.setDistributions(dests, shares);
+        assertEq(DEPLOYED_ROUTER.destinations().length, 0);
+        IRevenueRouter.Destination[] memory d = _proposedDests();
 
-        IRevenueRouter.Destination[] memory d = _fundedDests(2); // holdings 1 : 2
-        vm.prank(TIMELOCK);
-        router.addDestinations(d);
+        // Register zeroes the current externals, then sets the furnace, StRSR, and new externals
+        address[] memory dests = new address[](5);
+        RevenueShare[] memory shares = new RevenueShare[](5);
+        (dests[0], shares[0]) = (0x12ec148a193BA7b3a141ce6d02AdE326883d28D9, RevenueShare(0, 0));
+        (dests[1], shares[1]) = (0x2e3F334f9035aAB204347508415dEc785cd5075E, RevenueShare(0, 0));
+        (dests[2], shares[2]) = (FURNACE, RevenueShare(0, 0));
+        (dests[3], shares[3]) = (ST_RSR, RevenueShare(0, 2000));
+        (dests[4], shares[4]) = (address(DEPLOYED_ROUTER), RevenueShare(8000, 0));
 
-        address trader = main.rTokenTrader();
-        uint256 amount = 3000e18;
-        deal(address(EUSD), trader, amount);
-        vm.startPrank(trader);
-        IApprove(address(EUSD)).approve(address(distributor), amount);
-        distributor.distribute(address(EUSD), amount);
-        vm.stopPrank();
+        address[] memory targets = new address[](2);
+        bytes[] memory calldatas = new bytes[](2);
+        (targets[0], calldatas[0]) =
+        (address(distributor), abi.encodeCall(IDistributor.setDistributions, (dests, shares)));
+        (targets[1], calldatas[1]) =
+        (address(DEPLOYED_ROUTER), abi.encodeCall(IRevenueRouter.addDestinations, (d)));
+        _passAndExecute(targets, calldatas);
 
-        uint256 received = EUSD.balanceOf(address(router));
-        assertGt(received, 0);
-        assertLe(received, amount);
+        assertEq(abi.encode(DEPLOYED_ROUTER.destinations()), abi.encode(d));
+        RevenueTotals memory totals = distributor.totals();
+        assertEq(totals.rTokenTotal, 8000); // the router is the only eUSD destination
+        assertEq(totals.rsrTotal, 2000); // StRSR is the only RSR destination
 
-        router.poke();
-        assertEq(EUSD.balanceOf(d[0].recipient), (received * 1e18) / 3e18);
-        assertEq(EUSD.balanceOf(d[1].recipient), (received * 2e18) / 3e18);
-        assertLt(EUSD.balanceOf(address(router)), 2);
+        // eUSD revenue takes the permissionless path: RevenueTrader -> Distributor -> router
+        IRevenueTrader trader = main.rTokenTrader();
+        uint256 amount = 100_000e18 + 7999;
+        deal(address(EUSD), address(trader), amount);
+        trader.distributeTokenToBuy();
+        // The Distributor pays whole multiples of amount / rTokenTotal; the DAO fee is RSR-only
+        uint256 received = (amount / 8000) * 8000;
+        assertEq(EUSD.balanceOf(address(DEPLOYED_ROUTER)), received);
+
+        uint256[] memory weights = new uint256[](d.length);
+        uint256 total;
+        for (uint256 i = 0; i < d.length; ++i) {
+            weights[i] = Math.mulDiv(EUSD.balanceOf(d[i].holder), d[i].multiplier, 1e18);
+            assertGt(weights[i], 0);
+            total += weights[i];
+        }
+
+        DEPLOYED_ROUTER.poke();
+        for (uint256 i = 0; i < d.length; ++i) {
+            assertEq(EUSD.balanceOf(d[i].recipient), Math.mulDiv(received, weights[i], total));
+        }
+        assertLt(EUSD.balanceOf(address(DEPLOYED_ROUTER)), d.length);
     }
 
     /// poke() and sweep() ignore eUSD's paused and frozen states
@@ -168,6 +259,38 @@ contract RevenueRouterForkTest is Test {
         console.log("poke gas per destination", pokeGas / n);
         assertLt(addGas, GAS_BUDGET);
         assertLt(pokeGas, GAS_BUDGET);
+    }
+
+    /// Pass and execute a proposal through eUSD's Governor and timelock. One fresh staker with
+    /// twice the RSR already staked clears the proposal threshold and quorum alone.
+    function _passAndExecute(address[] memory targets, bytes[] memory calldatas) internal {
+        uint256[] memory values = new uint256[](targets.length);
+        string memory description = "Route eUSD revenue through the RevenueRouter";
+        bytes32 descriptionHash = keccak256(bytes(description));
+
+        IERC20 rsr = main.rsr();
+        IStRSR stRSR = main.stRSR();
+        address voter = makeAddr("voter");
+        uint256 rsrAmount = 2 * rsr.balanceOf(address(stRSR));
+        // deal() on RSR makes thousands of RPC storage reads; transfer from Reserve's SlowWallet
+        vm.prank(RSR_SLOW_WALLET);
+        rsr.transfer(voter, rsrAmount);
+
+        vm.startPrank(voter);
+        rsr.approve(address(stRSR), rsrAmount);
+        stRSR.stake(rsrAmount);
+        stRSR.delegate(voter);
+        vm.warp(block.timestamp + 1); // votes count from the next timestamp
+        uint256 id = GOVERNOR.propose(targets, values, calldatas, description);
+        vm.warp(GOVERNOR.proposalSnapshot(id) + 1);
+        GOVERNOR.castVote(id, 1); // For
+        vm.stopPrank();
+
+        vm.warp(GOVERNOR.proposalDeadline(id) + 1);
+        GOVERNOR.queue(targets, values, calldatas, descriptionHash);
+        vm.warp(GOVERNOR.proposalEta(id));
+        GOVERNOR.execute(targets, values, calldatas, descriptionHash);
+        assertEq(GOVERNOR.state(id), 7); // Executed
     }
 
     function _cool(IRevenueRouter.Destination[] memory d) internal {

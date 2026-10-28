@@ -46,9 +46,11 @@ jobs:
       - name: Unit Tests
         run: pnpm test
 
-      # Skips unless the MAINNET_RPC_URL secret (archive node) is set
+      # Uses the default public RPC. Fails unless every fork test runs and passes.
       - name: Fork Tests
         timeout-minutes: 10
-        run: pnpm test:fork
-        env:
-          MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+        run: |
+          set -o pipefail
+          pnpm test:fork | tee "$RUNNER_TEMP/fork.log"
+          grep -Eq '[1-9][0-9]* tests? passed, 0 failed, 0 skipped' "$RUNNER_TEMP/fork.log" \
+            || { echo "::error::Fork tests were skipped or did not run"; exit 1; }

@@ -64,8 +64,15 @@ exclude intrinsic and calldata gas.
 
 ```sh
 pnpm install
-pnpm test                                     # unit tests
-MAINNET_RPC_URL=<archive rpc> pnpm test:fork  # mainnet fork tests
+pnpm test       # unit tests
+pnpm test:fork  # mainnet fork tests
 ```
 
-The fork tests pin block 26,243,013, so `MAINNET_RPC_URL` must point at an archive node.
+The fork tests pin block 26,290,000 and read archive state from Tenderly's public gateway. Set
+`MAINNET_RPC_URL` to use another archive RPC. CI runs them and fails if any test is skipped.
+
+`test_governanceProposal` simulates the planned governance proposal against the deployed router,
+built the way Register builds it: `Distributor.setDistributions` for the 80% eUSD / 20% RSR split,
+then `addDestinations`, passed through eUSD's Governor and timelock. eUSD revenue then flows
+through the real RevenueTrader and Distributor and is poked out to the recipients. The
+destinations are placeholders until the final list is set.
